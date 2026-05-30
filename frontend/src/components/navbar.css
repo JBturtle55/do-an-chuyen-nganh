@@ -1,0 +1,23 @@
+.nav-link-blue:hover {
+  color: #fff !important;
+  background: rgba(255,255,255,0.15) !important;
+  border-radius: 4px;
+}
+
+.nav-link-scrolled:hover {
+  color: #1D7DB8 !important;
+  background: rgba(29,125,184,0.08) !important;
+  border-radius: 4px;
+}
+
+/* Hamburger hidden on desktop */
+.nav-hamburger { display: none !important; }
+
+@media (max-width: 768px) {
+  /* Hide desktop nav & auth on mobile */
+  .nav-desktop { display: none !important; }
+  /* Show hamburger on mobile */
+  .nav-hamburger { display: flex !important; }
+  /* Reduce padding on mobile */
+  .nav-inner { padding: 0 16px !important; }
+}
