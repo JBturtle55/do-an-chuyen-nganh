@@ -11,6 +11,10 @@ const multer      = require('multer');
 const path        = require('path');
 const { protect, isAdmin } = require('../middleware/auth');
 const { addAdminClient, removeAdminClient, broadcastToUser } = require('../chatSSE');
+const { broadcast } = require('../sseClients');
+const Payment           = require('../models/Payment');
+const WalletTransaction = require('../models/WalletTransaction');
+const PointTransaction  = require('../models/PointTransaction');
 
 // Cấu hình multer upload ảnh — chỉ chấp nhận image, tối đa 5MB
 const storage = multer.diskStorage({
@@ -127,17 +131,70 @@ router.get('/stats', async (req, res) => {
 // Huỷ booking (từ phía admin)
 router.put('/bookings/:id/cancel', async (req, res) => {
   try {
-    const booking = await Booking.findByIdAndUpdate(
-      req.params.id,
-      { status: 'cancelled' },
-      { new: true }
-    );
+    const booking = await Booking.findById(req.params.id);
     if (!booking) return res.status(404).json({ message: 'Không tìm thấy booking' });
+    if (booking.status === 'cancelled') return res.status(400).json({ message: 'Vé đã huỷ rồi' });
+
+    const wasConfirmed = booking.status === 'confirmed';
+    booking.status = 'cancelled';
+
+    if (wasConfirmed) {
+      const payment = await Payment.findOne({ booking: booking._id, status: 'success' });
+
+      if (payment?.method === 'wallet') {
+        // Wallet payment — hoàn tiền ngay vào ví
+        const user = await User.findByIdAndUpdate(
+          booking.user,
+          { $inc: { walletBalance: booking.totalPrice } },
+          { new: true }
+        );
+        await WalletTransaction.create({
+          user:        booking.user,
+          type:        'refund',
+          amount:      booking.totalPrice,
+          balance:     user.walletBalance,
+          description: 'Hoàn tiền vé huỷ bởi admin',
+          booking:     booking._id,
+        });
+        booking.refundStatus = 'completed';
+      } else if (payment) {
+        // VNPay hoặc phương thức khác — đưa vào hàng chờ duyệt
+        booking.refundStatus = 'pending';
+      }
+
+      // Hoàn điểm thưởng
+      const pointTxs = await PointTransaction.find({ booking: booking._id });
+      if (pointTxs.length > 0) {
+        let pointDelta = 0;
+        for (const tx of pointTxs) {
+          pointDelta += tx.type === 'earn' ? -tx.points : tx.points;
+        }
+        if (pointDelta !== 0) {
+          const updatedUser = await User.findByIdAndUpdate(
+            booking.user,
+            { $inc: { loyaltyPoints: pointDelta } },
+            { new: true }
+          );
+          await PointTransaction.create({
+            user:        booking.user,
+            type:        pointDelta > 0 ? 'earn' : 'redeem',
+            points:      Math.abs(pointDelta),
+            balance:     updatedUser.loyaltyPoints,
+            description: 'Điều chỉnh điểm do admin huỷ vé',
+            booking:     booking._id,
+          });
+        }
+      }
+    }
+
+    await booking.save();
 
     // Hoàn lại ghế
     await Trip.findByIdAndUpdate(booking.trip, {
       $inc: { availableSeats: booking.seats.length }
     });
+    broadcast(booking.trip.toString(), { type: 'seats_updated' });
+
     res.json(booking);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -207,13 +264,33 @@ router.get('/refunds', async (req, res) => {
   }
 });
 
-// Hoàn tiền — xác nhận đã hoàn
+// Hoàn tiền — xác nhận đã hoàn (admin duyệt → credit ví FASTPAY)
 router.put('/bookings/:id/refund', async (req, res) => {
   try {
-    const booking = await Booking.findByIdAndUpdate(
-      req.params.id, { refundStatus: 'completed' }, { new: true }
-    );
+    const booking = await Booking.findById(req.params.id);
     if (!booking) return res.status(404).json({ message: 'Không tìm thấy booking' });
+    if (booking.refundStatus === 'completed') return res.status(400).json({ message: 'Đã hoàn tiền rồi' });
+
+    // Credit ví FASTPAY cho user
+    const user = await User.findByIdAndUpdate(
+      booking.user,
+      { $inc: { walletBalance: booking.totalPrice } },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ message: 'Không tìm thấy user' });
+
+    await WalletTransaction.create({
+      user:        booking.user,
+      type:        'refund',
+      amount:      booking.totalPrice,
+      balance:     user.walletBalance,
+      description: 'Hoàn tiền vé - admin xác nhận',
+      booking:     booking._id,
+    });
+
+    booking.refundStatus = 'completed';
+    await booking.save();
+
     res.json(booking);
   } catch (err) {
     res.status(500).json({ message: err.message });

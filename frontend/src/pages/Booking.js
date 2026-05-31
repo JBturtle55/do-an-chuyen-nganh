@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getTrip, createBooking, getBookedSeats, getTripReviews } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import SeatMap from '../components/SeatMap';
+import { BookingPageSkeleton } from '../components/Skeleton';
 import { formatPrice } from '../utils/format';
 import { useToast } from '../components/Toast';
 import useSEO from '../hooks/useSEO';
@@ -128,7 +129,7 @@ function SummaryCard({ trip, selectedSeats, totalPrice, showSeats }) {
       )}
 
       <div style={{ padding:'12px 20px' }}>
-        {[['🚫', 'Không đổi lịch', 'Không thể thay đổi sau khi đặt'],['↩️', 'Không hoàn lại', 'Vé không thể hủy sau khi đặt']].map(([icon,title,sub]) => (
+        {[['🚫', 'Không đổi lịch', 'Không thể thay đổi sau khi đặt'],['↩️', 'Hoàn tiền theo chính sách', 'Xem chi tiết tại trang chính sách hoàn vé']].map(([icon,title,sub]) => (
           <div key={title} style={{ display:'flex', gap:10, alignItems:'flex-start', marginBottom:8 }}>
             <span style={{ fontSize:13 }}>{icon}</span>
             <div>
@@ -150,7 +151,7 @@ export default function Booking() {
 
   const [bookStep, setBookStep]             = useState(1);
   const [trip, setTrip]                     = useState(null);
-  const [bookedSeats, setBookedSeats]       = useState({ confirmed:[], pending:[] });
+  const [bookedSeats, setBookedSeats]       = useState({ confirmed:[], pending:[], processing:[] });
   const [selectedSeats, setSelected]        = useState([]);
   const [form, setForm]                     = useState({ passengerName:'', passengerPhone:'' });
   const [loading, setLoading]               = useState(false);
@@ -191,13 +192,7 @@ export default function Booking() {
     return () => es.close();
   }, [id]);
 
-  if (pageLoading) return (
-    <div style={s.center}>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      <div style={s.spinner}/>
-      <p style={{ color:'#888', marginTop:16 }}>Đang tải thông tin chuyến...</p>
-    </div>
-  );
+  if (pageLoading) return <BookingPageSkeleton/>;
 
   if (pageError || !trip) return (
     <div style={s.center}>
@@ -218,8 +213,6 @@ export default function Booking() {
       errors.passengerName = 'Vui lòng nhập họ tên';
     if (!form.passengerPhone.trim())
       errors.passengerPhone = 'Vui lòng nhập số điện thoại';
-    else if (!/^(0[3|5|7|8|9])[0-9]{8}$/.test(form.passengerPhone.trim()))
-      errors.passengerPhone = 'Số điện thoại không hợp lệ (VD: 0901234567)';
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors);
       return;

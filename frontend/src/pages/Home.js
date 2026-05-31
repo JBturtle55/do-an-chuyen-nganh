@@ -1,7 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getPosts, getPublicVouchers, getCities } from '../services/api';
 import useSEO from '../hooks/useSEO';
+
+function useInView() {
+  const ref = useRef(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) { setInView(true); obs.disconnect(); } },
+      { threshold: 0.05, rootMargin: '0px 0px -60px 0px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []); // eslint-disable-line
+  return [ref, inView];
+}
 
 const P = '#1D7DB8';   // primary
 const INK = '#0C1825'; // ink
@@ -144,6 +160,10 @@ export default function Home() {
   const [voucherIdx, setVoucherIdx] = useState(0);
   const [copied, setCopied] = useState(null);
   const [vouchers, setVouchers] = useState([]);
+  const [popularRef, popularInView] = useInView();
+  const [whyRef,     whyInView]     = useInView();
+  const newsRef = useRef(null);
+  const [newsInView, setNewsInView] = useState(false);
 
   useSEO({ title: 'FASTBUS — Đặt vé xe khách trực tuyến', description: 'Đặt vé xe khách trực tuyến nhanh chóng, tiện lợi. Hàng trăm tuyến xe khắp Việt Nam.' });
 
@@ -164,6 +184,18 @@ export default function Home() {
     return () => clearInterval(t);
   }, [vouchers.length]);
 
+  useEffect(() => {
+    if (posts.length === 0) return;
+    const el = newsRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) { setNewsInView(true); obs.disconnect(); } },
+      { threshold: 0.05, rootMargin: '0px 0px -60px 0px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [posts.length]); // eslint-disable-line
+
   const copyCode = (code) => {
     navigator.clipboard.writeText(code).catch(() => {});
     setCopied(code);
@@ -183,14 +215,18 @@ export default function Home() {
   return (
     <div style={{ background: 'var(--surface-2)', minHeight: '100vh' }}>
       <style>{`
-        @keyframes fadeUp { from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:translateY(0)} }
-        .hm-pop-card:hover { transform:translateY(-4px); box-shadow:0 16px 40px rgba(11,31,58,0.15)!important; }
-        .hm-pop-card { transition:transform .2s,box-shadow .2s; }
+        @keyframes fadeUp   { from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:translateY(0)} }
+        @keyframes fadeIn   { from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)} }
+        @keyframes pulse    { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.5);opacity:.6} }
+        @keyframes floatY   { 0%,100%{transform:translateY(0)}  50%{transform:translateY(-8px)} }
+        .hm-inview          { animation:fadeIn .65s ease both; }
+        .hm-pop-card:hover  { transform:translateY(-4px); box-shadow:0 16px 40px rgba(11,31,58,0.15)!important; }
+        .hm-pop-card        { transition:transform .2s,box-shadow .2s; }
         .hm-route-row:hover { background:var(--primary-soft)!important; }
         .hm-feat-card:hover { transform:translateY(-4px); box-shadow:0 10px 32px rgba(11,31,58,0.1)!important; }
-        .hm-feat-card { transition:transform .2s,box-shadow .2s; }
-        .hm-search-btn:hover { box-shadow:0 8px 28px rgba(255,107,53,0.45)!important; transform:translateY(-1px); }
-        .hm-search-btn { transition:box-shadow .15s,transform .15s; }
+        .hm-feat-card       { transition:transform .2s,box-shadow .2s; }
+        .hm-search-btn:hover { box-shadow:0 8px 28px rgba(29,125,184,0.45)!important; transform:translateY(-1px); }
+        .hm-search-btn      { transition:box-shadow .15s,transform .15s; }
         .hm-city-drop { position:absolute;top:calc(100% + 6px);left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,0.12);z-index:100;max-height:240px;overflow-y:auto; }
         .hm-city-opt:hover { background:var(--primary-soft)!important; color:var(--primary)!important; }
         @media(max-width:900px){
@@ -229,7 +265,7 @@ export default function Home() {
             backdropFilter:'blur(8px)',
             fontSize:12, fontWeight:700, letterSpacing:'0.05em', textTransform:'uppercase', marginBottom:24,
           }}>
-            <span style={{ width:6, height:6, borderRadius:'50%', background:'#D4A020' }}/>
+            <span style={{ width:6, height:6, borderRadius:'50%', background:'#D4A020', animation:'pulse 2s ease-in-out infinite' }}/>
             {'Đặt vé xe khách trực tuyến · 100+ tuyến'}
           </div>
 
@@ -376,7 +412,7 @@ export default function Home() {
               <button className="hm-search-btn" onClick={search}
                 style={{ padding:'0 32px', background:P, color:'#fff', border:'none', borderRadius:12,
                   fontSize:15, fontWeight:800, cursor:'pointer', whiteSpace:'nowrap',
-                  boxShadow:`0 4px 16px rgba(255,107,53,0.35)`,
+                  boxShadow:`0 4px 16px rgba(29,125,184,0.35)`,
                   height:46, boxSizing:'border-box',
                 }}>
                 {'Tìm chuyến'}
@@ -648,7 +684,10 @@ export default function Home() {
       )}
 
       {/* ── POPULAR ROUTES ── */}
-      <div style={{ maxWidth:1280, margin:'0 auto', padding:'80px 32px 40px' }}>
+      <div ref={popularRef} style={{ maxWidth:1280, margin:'0 auto', padding:'80px 32px 40px',
+        opacity: popularInView ? 1 : 0, transform: popularInView ? 'none' : 'translateY(32px)',
+        transition: 'opacity .7s ease, transform .7s ease',
+      }}>
         <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginBottom:28 }}>
           <div>
             <div style={{ fontSize:12, fontWeight:800, color:P, letterSpacing:'0.1em', textTransform:'uppercase', marginBottom:8 }}>
@@ -660,13 +699,18 @@ export default function Home() {
           </div>
           <button onClick={() => navigate('/search')}
             style={{ fontSize:14, fontWeight:700, color:P, background:'none', border:'none', cursor:'pointer' }}>
-            {'Xem tất cả tin tức →'}
+            {'Xem tất cả tuyến →'}
           </button>
         </div>
 
         <div className="hm-pop-grid" style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:20 }}>
-          {POPULAR.map(r => (
-            <div key={r.from+r.to} className="hm-pop-card"
+          {POPULAR.map((r, idx) => (
+            <div key={r.from+r.to} style={{
+              opacity: popularInView ? 1 : 0,
+              transform: popularInView ? 'none' : 'translateY(28px)',
+              transition: `opacity .55s ease ${idx * 0.09}s, transform .55s ease ${idx * 0.09}s`,
+            }}>
+            <div className="hm-pop-card"
               onClick={() => navigate(`/search?from=${encodeURIComponent(r.from)}&to=${encodeURIComponent(r.to)}`)}
               style={{ background:'#fff', borderRadius:16, overflow:'hidden', cursor:'pointer',
                 boxShadow:'0 2px 8px rgba(11,31,58,0.07)', border:'1px solid var(--line)',
@@ -697,12 +741,16 @@ export default function Home() {
                 </div>
               </div>
             </div>
+            </div>
           ))}
         </div>
       </div>
 
       {/* ── WHY FASTBUS ── */}
-      <div style={{ background:'#fff', padding:'72px 32px' }}>
+      <div ref={whyRef} style={{ background:'#fff', padding:'72px 32px',
+        opacity: whyInView ? 1 : 0, transform: whyInView ? 'none' : 'translateY(32px)',
+        transition: 'opacity .7s ease, transform .7s ease',
+      }}>
         <div style={{ maxWidth:960, margin:'0 auto' }}>
           <h2 style={{ textAlign:'center', fontSize:26, fontWeight:900, color:INK,
             margin:'0 0 56px', letterSpacing:'-0.02em', lineHeight:1.35,
@@ -721,6 +769,7 @@ export default function Home() {
                   boxShadow: even
                     ? '0 8px 32px rgba(29,125,184,0.15)'
                     : '0 8px 32px rgba(22,163,74,0.12)',
+                  animation: whyInView ? `floatY 3.5s ease-in-out ${i * 0.4}s infinite` : 'none',
                 }}>
                   <f.Icon c={even ? P : '#16A34A'}/>
                 </div>
@@ -755,7 +804,11 @@ export default function Home() {
 
       {/* ── NEWS ── */}
       {posts.length > 0 && (
-        <div style={{ background:'#fff', borderTop:'1px solid var(--line)' }}>
+        <div ref={newsRef} style={{ background:'#fff', borderTop:'1px solid var(--line)',
+          opacity: newsInView ? 1 : 0,
+          transform: newsInView ? 'none' : 'translateY(32px)',
+          transition: 'opacity .7s ease, transform .7s ease',
+        }}>
           <div style={{ maxWidth:1280, margin:'0 auto', padding:'60px 32px' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:28 }}>
               <div>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { TableRowSkeleton, BookingCardSkeleton } from '../components/Skeleton';
 import {
   updateProfile, changePassword,
   getMyBookings, cancelBooking,
@@ -170,7 +171,7 @@ function PointsTab() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} style={tbl.empty}>Đang tải...</td></tr>
+              <>{[1,2,3,4].map(i => <TableRowSkeleton key={i} cols={5}/>)}</>
             ) : filtered.length === 0 ? (
               <tr>
                 <td colSpan={5} style={{ textAlign:'center', padding:'52px 0', color:MUTED }}>
@@ -332,7 +333,7 @@ function WalletTab() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5} style={tbl.empty}>Đang tải...</td></tr>
+                <>{[1,2,3,4].map(i => <TableRowSkeleton key={i} cols={5}/>)}</>
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={5} style={{ textAlign:'center', padding:'52px 0', color:MUTED }}>
@@ -498,7 +499,7 @@ function BookingsTab() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} style={tbl.empty}>Đang tải...</td></tr>
+              <>{[1,2,3,4].map(i => <TableRowSkeleton key={i} cols={7}/>)}</>
             ) : filtered.length === 0 ? (
               <tr>
                 <td colSpan={7} style={{ textAlign:'center', padding:'52px 0', color:MUTED }}>

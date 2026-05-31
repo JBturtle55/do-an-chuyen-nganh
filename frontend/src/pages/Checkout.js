@@ -4,6 +4,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { getBooking, getWallet, getPoints, payWithWallet, createVnpayPayment, validateVoucher } from '../services/api';
 import { formatPrice } from '../utils/format';
 import { useToast } from '../components/Toast';
+import { CheckoutPageSkeleton } from '../components/Skeleton';
 import useSEO from '../hooks/useSEO';
 
 const P   = '#1D7DB8';
@@ -146,13 +147,7 @@ export default function Checkout() {
     }
   };
 
-  if (loading) return (
-    <div style={s.center}>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      <div style={s.spinner}/>
-      <p style={{ color:'#888', marginTop:14 }}>Đang tải...</p>
-    </div>
-  );
+  if (loading) return <CheckoutPageSkeleton/>;
 
   if (expired || (booking?.status !== 'pending' && booking?.status !== 'processing')) return (
     <div style={s.center}>
@@ -600,7 +595,7 @@ export default function Checkout() {
               </div>
 
               <div style={{ padding:'14px 20px' }}>
-                {[['🚫', 'Không đổi lịch', 'Không thể thay đổi sau khi đặt'],['↩️', 'Không hoàn lại', 'Vé không thể hủy sau khi đặt']].map(([icon,title,sub]) => (
+                {[['🚫', 'Không đổi lịch', 'Không thể thay đổi sau khi đặt'],['↩️', 'Hoàn tiền theo chính sách', 'Xem chi tiết tại trang chính sách hoàn vé']].map(([icon,title,sub]) => (
                   <div key={title} style={{ display:'flex', gap:12, alignItems:'flex-start', marginBottom:10 }}>
                     <span style={{ fontSize:15 }}>{icon}</span>
                     <div>

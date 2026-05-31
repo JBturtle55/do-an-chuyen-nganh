@@ -2,29 +2,28 @@ import { useToast } from './Toast';
 
 export default function SeatMap({ totalSeats, bookedSeats = {}, selectedSeats = [], onToggle }) {
   const { addToast } = useToast();
-  // bookedSeats giờ là object: { confirmed: [], pending: [] }
-  const confirmed = bookedSeats.confirmed || (Array.isArray(bookedSeats) ? bookedSeats : []);
-  const pending   = bookedSeats.pending   || [];
+  // bookedSeats: { confirmed: [], pending: [], processing: [] }
+  const confirmed  = bookedSeats.confirmed  || (Array.isArray(bookedSeats) ? bookedSeats : []);
+  const pending    = bookedSeats.pending    || [];
+  const processing = bookedSeats.processing || [];
 
   const getStatus = (n) => {
-    if (confirmed.includes(n))    return 'confirmed';
-    if (pending.includes(n))      return 'pending';
-    if (selectedSeats.includes(n)) return 'selected';
+    if (confirmed.includes(n))             return 'confirmed';
+    if (processing.includes(n))            return 'confirmed';  // hiện như đã đặt — không cho chọn
+    if (pending.includes(n))               return 'pending';
+    if (selectedSeats.includes(n))         return 'selected';
     return 'available';
   };
 
   const styleMap = {
     available: { bg:'#E3F1FA', border:'#1D7DB8', color:'#0f5f8c', cursor:'pointer',     title:'' },
-    pending:   { bg:'#fef9c3', border:'#fde68a', color:'#92400e', cursor:'pointer',     title: 'Ghế đang chờ thanh toán' },
+    pending:   { bg:'#fef9c3', border:'#fde68a', color:'#b45309', cursor:'not-allowed', title: 'Ghế đang chờ thanh toán' },
     selected:  { bg:'#1D7DB8', border:'#0f5f8c', color:'#fff',    cursor:'pointer',     title: 'Đang chọn' },
     confirmed: { bg:'#e5e7eb', border:'#d1d5db', color:'#9ca3af', cursor:'not-allowed', title: 'Đã đặt' },
   };
 
   const handleClick = (n, status) => {
-    if (status === 'confirmed') return;
-    if (status === 'pending') {
-      addToast('Ghế này đang có người chờ thanh toán. Nếu họ thanh toán trước, ghế sẽ bị khoá!', 'warning');
-    }
+    if (status === 'confirmed' || status === 'pending') return;
     onToggle(n);
   };
 

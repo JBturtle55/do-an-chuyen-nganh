@@ -23,10 +23,10 @@ input  { box-sizing: border-box; }
 
 /* NProgress loading bar */
 #nprogress .bar {
-  background: #fff !important;
+  background: #1D7DB8 !important;
   height: 3px !important;
-  box-shadow: 0 0 8px rgba(255,255,255,0.7) !important;
+  box-shadow: 0 0 8px rgba(29,125,184,0.7) !important;
 }
 #nprogress .peg {
-  box-shadow: 0 0 10px #fff, 0 0 5px #fff !important;
+  box-shadow: 0 0 10px #1D7DB8, 0 0 5px #1D7DB8 !important;
 }

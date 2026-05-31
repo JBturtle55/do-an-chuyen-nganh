@@ -45,7 +45,7 @@ const INFO_CARDS = [
   {
     icon: '📧',
     title: 'Email',
-    line1: 'support@fastbus.vn',
+    line1: 'nhoxgiangvipro55@gmail.com',
     line2: 'Phản hồi trong 24h làm việc',
     bold1: false,
   },

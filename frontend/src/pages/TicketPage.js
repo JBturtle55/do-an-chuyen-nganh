@@ -4,6 +4,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import { QRCodeSVG } from 'qrcode.react';
 import html2canvas from 'html2canvas';
 import { getBooking, cancelBooking, submitReview, getBookingReview } from '../services/api';
+import { TicketPageSkeleton } from '../components/Skeleton';
 import { formatPrice } from '../utils/format';
 import { useToast } from '../components/Toast';
 import useSEO from '../hooks/useSEO';
@@ -148,14 +149,7 @@ export default function TicketPage() {
     }
   };
 
-  if (loading) return (
-    <div style={s.page}>
-      <div style={s.loadWrap}>
-        <div style={s.spinner}/>
-        <div style={{ color: 'rgba(255,255,255,0.6)', marginTop: '16px', fontSize: '14px' }}>Đang tải...</div>
-      </div>
-    </div>
-  );
+  if (loading) return <TicketPageSkeleton/>;
 
   if (!booking) return null;
 
@@ -317,7 +311,7 @@ export default function TicketPage() {
             )}
             {booking.pointsUsed > 0 && (
               <PriceRow label={`Điểm thưởng (${booking.pointsUsed} điểm)`}
-                value={`-${formatPrice(booking.pointsUsed * 100)}`} color="#7c3aed"/>
+                value={`-${formatPrice(booking.pointsUsed)}`} color="#7c3aed"/>
             )}
             <div style={s.totalRow}>
               <span style={s.totalLabel}>TỔNG THANH TOÁN</span>

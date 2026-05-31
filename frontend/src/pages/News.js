@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import { getPosts, getPost } from '../services/api';
+import { PostCardSkeleton, PostFeaturedSkeleton } from '../components/Skeleton';
 
 const P     = '#1D7DB8';
 const INK   = '#0C1825';
@@ -87,7 +88,12 @@ export function NewsList() {
 
       <div style={s.content}>
         {loading ? (
-          <div style={s.center}><div style={s.spinner}/></div>
+          <div>
+            <PostFeaturedSkeleton/>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(275px,1fr))', gap:20 }}>
+              {[1,2,3,4,5,6].map(i => <PostCardSkeleton key={i}/>)}
+            </div>
+          </div>
         ) : posts.length === 0 ? (
           <div style={s.center}>
             <div style={{ fontSize:52, marginBottom:12 }}>📰</div>

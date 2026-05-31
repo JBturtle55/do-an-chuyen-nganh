@@ -162,13 +162,14 @@ router.get('/:id/booked-seats', async (req, res) => {
   try {
     const bookings = await require('../models/Booking').find({
       trip: req.params.id,
-      status: { $in: ['pending', 'confirmed'] }
+      status: { $in: ['pending', 'processing', 'confirmed'] }
     }).select('seats status');
 
-    // Trả về object: { confirmed: [1,3,5], pending: [2,4] }
-    const result = { confirmed: [], pending: [] };
+    // Trả về object: { confirmed: [1,3,5], pending: [2,4], processing: [6] }
+    const result = { confirmed: [], pending: [], processing: [] };
     bookings.forEach(b => {
-      b.seats.forEach(seat => result[b.status].push(seat));
+      const key = b.status === 'processing' ? 'processing' : b.status;
+      b.seats.forEach(seat => result[key].push(seat));
     });
     res.json(result);
   } catch (err) {

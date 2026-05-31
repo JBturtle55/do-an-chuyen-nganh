@@ -208,77 +208,153 @@ function SearchBar({ localFrom, setLocalFrom, localTo, setLocalTo, localDate, se
 }
 
 /* ── Filter sidebar ────────────────────────────────────────────── */
-function FilterSidebar({ busNames, filterBus, setFilterBus, sortBy, setSortBy, onlyAvail, setOnlyAvail, onlySale, setOnlySale, hasFilter, clearFilters, count, total }) {
+function FilterSidebar({ busNames, busTypes, filterBus, setFilterBus, filterBusType, setFilterBusType,
+                         sortBy, setSortBy, onlyAvail, setOnlyAvail, onlySale, setOnlySale,
+                         timeOfDay, setTimeOfDay, hasFilter, clearFilters }) {
+  const [open, setOpen] = useState({ sort:true, time:false, busType:false, bus:false, quick:false });
+  const toggle = (k) => setOpen(o => ({ ...o, [k]: !o[k] }));
+
+  const Chevron = ({ up }) => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2.5"
+      style={{ transform: up ? 'rotate(180deg)' : 'none', transition:'transform .2s', flexShrink:0 }}>
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>
+  );
+
+  const Badge = ({ n }) => n > 0 ? (
+    <span style={{ marginLeft:6, background:P, color:'#fff', borderRadius:'50%',
+      width:17, height:17, fontSize:11, fontWeight:800,
+      display:'inline-flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{n}</span>
+  ) : null;
+
+  const SectionHead = ({ id, label, badge }) => (
+    <button onClick={() => toggle(id)} style={{
+      width:'100%', padding:'13px 18px', background:'none', border:'none',
+      display:'flex', alignItems:'center', justifyContent:'space-between',
+      cursor:'pointer', borderBottom: open[id] ? 'none' : '1px solid #E8EFF7',
+    }}>
+      <span style={{ display:'flex', alignItems:'center', fontSize:14, fontWeight:700, color:INK }}>
+        {label}<Badge n={badge}/>
+      </span>
+      <Chevron up={open[id]}/>
+    </button>
+  );
+
+  const RadioRow = ({ val, cur, set, label }) => (
+    <div onClick={() => set(val)} style={{ display:'flex', alignItems:'center', gap:10,
+      padding:'7px 0', cursor:'pointer' }}>
+      <div style={{ width:17, height:17, borderRadius:'50%', flexShrink:0,
+        border:`2px solid ${cur===val ? P : '#C8D5E4'}`,
+        background: cur===val ? P : '#fff',
+        display:'flex', alignItems:'center', justifyContent:'center', transition:'all .12s' }}>
+        {cur===val && <div style={{ width:6, height:6, borderRadius:'50%', background:'#fff' }}/>}
+      </div>
+      <span style={{ fontSize:13, color: cur===val ? INK : '#5E7A96', fontWeight: cur===val ? 600 : 400 }}>{label}</span>
+    </div>
+  );
+
+  const CheckRow = ({ active, onToggle, label }) => (
+    <div onClick={onToggle} style={{ display:'flex', alignItems:'center', gap:10,
+      padding:'7px 0', cursor:'pointer' }}>
+      <div style={{ width:17, height:17, borderRadius:4, flexShrink:0,
+        border:`2px solid ${active ? P : '#C8D5E4'}`,
+        background: active ? P : '#fff',
+        display:'flex', alignItems:'center', justifyContent:'center', transition:'all .12s' }}>
+        {active && <span style={{ color:'#fff', fontSize:10, fontWeight:900, lineHeight:1 }}>✓</span>}
+      </div>
+      <span style={{ fontSize:13, color: active ? INK : '#5E7A96', fontWeight: active ? 600 : 400 }}>{label}</span>
+    </div>
+  );
+
+  const sortBadge = sortBy !== 'time' ? 1 : 0;
+  const timeBadge = timeOfDay ? 1 : 0;
+  const busBadge  = filterBus ? 1 : 0;
+  const typeBadge = filterBusType ? 1 : 0;
+  const quickBadge = (onlyAvail ? 1 : 0) + (onlySale ? 1 : 0);
+
   return (
-    <div style={{ background:'#fff', borderRadius:14, border:'1px solid #C8D5E4', overflow:'hidden', boxShadow:'0 2px 12px rgba(11,31,58,0.06)', position:'sticky', top:20 }}>
+    <div style={{ background:'#fff', borderRadius:14, border:'1px solid #C8D5E4',
+      boxShadow:'0 2px 12px rgba(11,31,58,0.06)', position:'sticky', top:20, overflow:'hidden' }}>
 
       {/* header */}
-      <div style={{ padding:'14px 18px', borderBottom:'1px solid #C8D5E4', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-        <span style={{ fontWeight:800, fontSize:14, color:INK }}>{'Sắp xếp'}</span>
+      <div style={{ padding:'13px 18px', borderBottom:'1px solid #E8EFF7',
+        display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <span style={{ fontWeight:800, fontSize:14, color:INK }}>{'Lọc'}</span>
         {hasFilter && (
-          <button onClick={clearFilters} style={{ fontSize:12, color:P, background:'none', border:'none', cursor:'pointer', fontWeight:700 }}>
-            {'Huỷ'}
+          <button onClick={clearFilters}
+            style={{ fontSize:12, color:P, background:'none', border:'none', cursor:'pointer', fontWeight:700, padding:0 }}>
+            {'Đặt lại bộ lọc'}
           </button>
         )}
       </div>
 
-      {/* sort */}
-      <div style={{ padding:'16px 18px', borderBottom:'1px solid #C8D5E4' }}>
-        <div style={{ fontSize:11, fontWeight:700, color:'#888', letterSpacing:1, textTransform:'uppercase', marginBottom:12 }}>{'Sắp xếp'}</div>
-        {[
-          ['time',       'Giờ khởi hành'],
-          ['price-asc',  'Giá thấp nhất'],
-          ['price-desc', 'Đánh giá cao nhất'],
-          ['seats',      'Loại xe'],
-        ].map(([val, label]) => (
-          <label key={val} style={{ display:'flex', alignItems:'center', gap:10, padding:'6px 0', cursor:'pointer' }}>
-            <div onClick={() => setSortBy(val)}
-              style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${sortBy===val ? P : '#D1D5DB'}`, background: sortBy===val ? P : '#fff', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', transition:'all .12s' }}>
-              {sortBy===val && <div style={{ width:6, height:6, borderRadius:'50%', background:'#fff' }}/>}
-            </div>
-            <span onClick={() => setSortBy(val)} style={{ fontSize:13, color: sortBy===val ? INK : '#555', fontWeight: sortBy===val ? 600 : 400 }}>
-              {label}
-            </span>
-          </label>
-        ))}
-      </div>
+      {/* ── Sắp xếp ── */}
+      <SectionHead id="sort" label="Sắp xếp" badge={sortBadge}/>
+      {open.sort && (
+        <div style={{ padding:'0 18px 12px', borderBottom:'1px solid #E8EFF7' }}>
+          {[
+            ['time',       'Sớm nhất'],
+            ['time-desc',  'Muộn nhất'],
+            ['price-asc',  'Giá thấp nhất'],
+            ['price-desc', 'Giá cao nhất'],
+            ['rating',     'Đánh giá cao nhất'],
+            ['seats',      'Còn nhiều ghế nhất'],
+          ].map(([val, label]) => <RadioRow key={val} val={val} cur={sortBy} set={setSortBy} label={label}/>)}
+        </div>
+      )}
 
-      {/* quick filters */}
-      <div style={{ padding:'16px 18px', borderBottom: busNames.length > 0 ? '1px solid #C8D5E4' : 'none' }}>
-        <div style={{ fontSize:11, fontWeight:700, color:'#888', letterSpacing:1, textTransform:'uppercase', marginBottom:12 }}>{'Giờ đi'}</div>
-        {[
-          [onlyAvail, setOnlyAvail, 'Tất cả'],
-          [onlySale,  setOnlySale,  '🔥 Flash Sale'],
-        ].map(([val, setter, label]) => (
-          <label key={label} style={{ display:'flex', alignItems:'center', gap:10, padding:'6px 0', cursor:'pointer' }} onClick={() => setter(v => !v)}>
-            <div style={{ width:18, height:18, borderRadius:5, border:`2px solid ${val ? P : '#D1D5DB'}`, background: val ? P : '#fff', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', transition:'all .12s' }}>
-              {val && <span style={{ color:'#fff', fontSize:11, fontWeight:900, lineHeight:1 }}>✓</span>}
-            </div>
-            <span style={{ fontSize:13, color: val ? INK : '#555', fontWeight: val ? 600 : 400 }}>{label}</span>
-          </label>
-        ))}
-      </div>
+      {/* ── Giờ khởi hành ── */}
+      <SectionHead id="time" label="Giờ khởi hành" badge={timeBadge}/>
+      {open.time && (
+        <div style={{ padding:'0 18px 12px', borderBottom:'1px solid #E8EFF7' }}>
+          {[
+            ['',          'Tất cả giờ'],
+            ['early',     'Sáng sớm (00:00 – 06:00)'],
+            ['morning',   'Buổi sáng (06:00 – 12:00)'],
+            ['afternoon', 'Buổi chiều (12:00 – 18:00)'],
+            ['evening',   'Buổi tối (18:00 – 24:00)'],
+          ].map(([val, label]) => <RadioRow key={val||'all'} val={val} cur={timeOfDay} set={setTimeOfDay} label={label}/>)}
+        </div>
+      )}
 
-      {/* bus operator filter */}
-      {busNames.length > 0 && (
-        <div style={{ padding:'16px 18px' }}>
-          <div style={{ fontSize:11, fontWeight:700, color:'#888', letterSpacing:1, textTransform:'uppercase', marginBottom:12 }}>{'Loại xe'}</div>
-          <label style={{ display:'flex', alignItems:'center', gap:10, padding:'6px 0', cursor:'pointer' }} onClick={() => setFilterBus('')}>
-            <div style={{ width:18, height:18, borderRadius:5, border:`2px solid ${filterBus==='' ? P : '#D1D5DB'}`, background: filterBus==='' ? P : '#fff', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', transition:'all .12s' }}>
-              {filterBus==='' && <span style={{ color:'#fff', fontSize:11, fontWeight:900, lineHeight:1 }}>✓</span>}
+      {/* ── Loại xe ── */}
+      {busTypes.length > 1 && (
+        <>
+          <SectionHead id="busType" label="Loại xe" badge={typeBadge}/>
+          {open.busType && (
+            <div style={{ padding:'0 18px 12px', borderBottom:'1px solid #E8EFF7' }}>
+              <CheckRow active={!filterBusType} onToggle={() => setFilterBusType('')} label="Tất cả loại xe"/>
+              {busTypes.map(t => (
+                <CheckRow key={t} active={filterBusType===t}
+                  onToggle={() => setFilterBusType(filterBusType===t ? '' : t)} label={t}/>
+              ))}
             </div>
-            <span style={{ fontSize:13, color: filterBus==='' ? INK : '#555', fontWeight: filterBus==='' ? 600 : 400 }}>{'Tất cả'}</span>
-          </label>
-          {busNames.map(name => (
-            <label key={name} style={{ display:'flex', alignItems:'center', gap:10, padding:'6px 0', cursor:'pointer' }} onClick={() => setFilterBus(name)}>
-              <div style={{ width:18, height:18, borderRadius:5, border:`2px solid ${filterBus===name ? P : '#D1D5DB'}`, background: filterBus===name ? P : '#fff', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', transition:'all .12s' }}>
-                {filterBus===name && <span style={{ color:'#fff', fontSize:11, fontWeight:900, lineHeight:1 }}>✓</span>}
-              </div>
-              <span style={{ fontSize:13, color: filterBus===name ? INK : '#555', fontWeight: filterBus===name ? 600 : 400 }}>
-                {name}
-              </span>
-            </label>
-          ))}
+          )}
+        </>
+      )}
+
+      {/* ── Nhà xe ── */}
+      {busNames.length > 1 && (
+        <>
+          <SectionHead id="bus" label="Nhà xe" badge={busBadge}/>
+          {open.bus && (
+            <div style={{ padding:'0 18px 12px', borderBottom:'1px solid #E8EFF7' }}>
+              <CheckRow active={!filterBus} onToggle={() => setFilterBus('')} label="Tất cả nhà xe"/>
+              {busNames.map(name => (
+                <CheckRow key={name} active={filterBus===name}
+                  onToggle={() => setFilterBus(filterBus===name ? '' : name)} label={name}/>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Ưu đãi ── */}
+      <SectionHead id="quick" label="Ưu đãi & Ghế trống" badge={quickBadge}/>
+      {open.quick && (
+        <div style={{ padding:'0 18px 12px' }}>
+          <CheckRow active={onlySale}  onToggle={() => setOnlySale(v => !v)}  label="🔥 Flash Sale"/>
+          <CheckRow active={onlyAvail} onToggle={() => setOnlyAvail(v => !v)} label="Chỉ chuyến còn ghế"/>
         </div>
       )}
     </div>
@@ -303,35 +379,55 @@ export default function Search() {
   const MAX_SLIDE   = BANNERS.length + 1 - ITEMS_SHOWN; // 4 items - 3 visible = 1
   const [cities,     setCities]     = useState([]);
   const [trips,      setTrips]      = useState([]);
-  const [loading,    setLoading]    = useState(false);
+  const hasInitialSearch = !!(searchParams.get('from') || searchParams.get('to'));
+  const [loading,    setLoading]    = useState(hasInitialSearch);
   const [error,      setError]      = useState(false);
-  const [searched,   setSearched]   = useState(false);
+  const [searched,   setSearched]   = useState(hasInitialSearch);
   const [nextDate,      setNextDate]      = useState(null);
   const [nextDateTrips, setNextDateTrips] = useState([]);
-  const [filterBus,  setFilterBus]  = useState('');
-  const [sortBy,     setSortBy]     = useState('time');
-  const [onlyAvail,  setOnlyAvail]  = useState(false);
-  const [onlySale,   setOnlySale]   = useState(false);
+  const [filterBus,     setFilterBus]     = useState('');
+  const [filterBusType, setFilterBusType] = useState('');
+  const [sortBy,        setSortBy]        = useState('time');
+  const [onlyAvail,     setOnlyAvail]     = useState(false);
+  const [onlySale,      setOnlySale]      = useState(false);
+  const [timeOfDay,     setTimeOfDay]     = useState('');
   const from = searchParams.get('from') || '';
   const to   = searchParams.get('to')   || '';
   const date = searchParams.get('date') || today;
 
   const busNames = useMemo(() => [...new Set(trips.map(t => t.bus?.name).filter(Boolean))], [trips]);
+  const busTypes = useMemo(() => [...new Set(trips.map(t => t.bus?.type).filter(Boolean))], [trips]);
 
-  const filteredTrips = useMemo(() => {
+  const applyFilterSort = (arr) => {
     const now = new Date();
-    let r = [...trips];
-    if (filterBus)  r = r.filter(t => t.bus?.name === filterBus);
-    if (onlyAvail)  r = r.filter(t => t.availableSeats > 0);
-    if (onlySale)   r = r.filter(t => t.salePercent > 0 && t.saleEndsAt && now < new Date(t.saleEndsAt));
-    if (sortBy === 'price-asc')  r.sort((a, b) => a.price - b.price);
-    if (sortBy === 'price-desc') r.sort((a, b) => b.price - a.price);
-    if (sortBy === 'seats')      r.sort((a, b) => b.availableSeats - a.availableSeats);
+    let r = [...arr];
+    if (filterBus)     r = r.filter(t => t.bus?.name === filterBus);
+    if (filterBusType) r = r.filter(t => t.bus?.type === filterBusType);
+    if (onlyAvail)     r = r.filter(t => t.availableSeats > 0);
+    if (onlySale)      r = r.filter(t => t.salePercent > 0 && t.saleEndsAt && now < new Date(t.saleEndsAt));
+    if (timeOfDay) r = r.filter(t => {
+      const h = new Date(t.departureTime).getHours();
+      if (timeOfDay === 'early')     return h < 6;
+      if (timeOfDay === 'morning')   return h >= 6  && h < 12;
+      if (timeOfDay === 'afternoon') return h >= 12 && h < 18;
+      if (timeOfDay === 'evening')   return h >= 18;
+      return true;
+    });
+    const byRating = (a, b) => (b.bus?.avgRating || 0) - (a.bus?.avgRating || 0);
+    if (sortBy === 'time')       r.sort((a, b) => new Date(a.departureTime) - new Date(b.departureTime));
+    if (sortBy === 'time-desc')  r.sort((a, b) => new Date(b.departureTime) - new Date(a.departureTime));
+    if (sortBy === 'price-asc')  r.sort((a, b) => (a.price - b.price) || byRating(a, b));
+    if (sortBy === 'price-desc') r.sort((a, b) => (b.price - a.price) || byRating(a, b));
+    if (sortBy === 'rating')     r.sort(byRating);
+    if (sortBy === 'seats')      r.sort((a, b) => (b.availableSeats - a.availableSeats) || byRating(a, b));
     return r;
-  }, [trips, filterBus, sortBy, onlyAvail, onlySale]);
+  };
 
-  const hasFilter = filterBus || sortBy !== 'time' || onlyAvail || onlySale;
-  const clearFilters = () => { setFilterBus(''); setSortBy('time'); setOnlyAvail(false); setOnlySale(false); };
+  const filteredTrips     = useMemo(() => applyFilterSort(trips),         [trips, filterBus, filterBusType, sortBy, onlyAvail, onlySale, timeOfDay]);         // eslint-disable-line
+  const filteredNextTrips = useMemo(() => applyFilterSort(nextDateTrips), [nextDateTrips, filterBus, filterBusType, sortBy, onlyAvail, onlySale, timeOfDay]); // eslint-disable-line
+
+  const hasFilter = !!(filterBus || filterBusType || sortBy !== 'time' || onlyAvail || onlySale || timeOfDay);
+  const clearFilters = () => { setFilterBus(''); setFilterBusType(''); setSortBy('time'); setOnlyAvail(false); setOnlySale(false); setTimeOfDay(''); };
 
   useSEO({
     title: from && to ? `${from} → ${to}` : 'Tìm chuyến xe — FASTBUS',
@@ -522,16 +618,26 @@ export default function Search() {
         <div className="search-grid" style={{ display:'flex', gap:20, alignItems:'flex-start' }}>
 
           {/* ── Sidebar filter — only when search active ── */}
-          {searched && !loading && !error && (
+          {searched && !error && (
             <div className="search-sidebar" style={{ width:256, flexShrink:0 }}>
-              <FilterSidebar
-                busNames={busNames} filterBus={filterBus} setFilterBus={setFilterBus}
-                sortBy={sortBy} setSortBy={setSortBy}
-                onlyAvail={onlyAvail} setOnlyAvail={setOnlyAvail}
-                onlySale={onlySale}  setOnlySale={setOnlySale}
-                hasFilter={hasFilter} clearFilters={clearFilters}
-                count={filteredTrips.length} total={trips.length}
-              />
+              {loading ? (
+                <div style={{ background:'#fff', borderRadius:12, padding:'20px 16px', boxShadow:'0 2px 8px rgba(0,0,0,0.06)' }}>
+                  {[100,70,80,60,90].map((w,i) => (
+                    <div key={i} className="skeleton-pulse" style={{ height:14, width:`${w}%`, borderRadius:4, marginBottom:12, background:'#e8eef5' }}/>
+                  ))}
+                </div>
+              ) : (
+                <FilterSidebar
+                  busNames={busNames} busTypes={busTypes}
+                  filterBus={filterBus} setFilterBus={setFilterBus}
+                  filterBusType={filterBusType} setFilterBusType={setFilterBusType}
+                  sortBy={sortBy} setSortBy={setSortBy}
+                  onlyAvail={onlyAvail} setOnlyAvail={setOnlyAvail}
+                  onlySale={onlySale}  setOnlySale={setOnlySale}
+                  timeOfDay={timeOfDay} setTimeOfDay={setTimeOfDay}
+                  hasFilter={hasFilter} clearFilters={clearFilters}
+                />
+              )}
             </div>
           )}
 
@@ -563,7 +669,7 @@ export default function Search() {
 
             ) : loading ? (
               <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-                <TripCardSkeleton/><TripCardSkeleton/><TripCardSkeleton/>
+                {[1,2,3,4,5].map(i => <TripCardSkeleton key={i}/>)}
               </div>
 
             ) : error ? (
@@ -594,7 +700,7 @@ export default function Search() {
                       </button>
                     </div>
                     <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-                      {nextDateTrips.map(trip => <TripCard key={trip._id} trip={trip}/>)}
+                      {filteredNextTrips.map(trip => <TripCard key={trip._id} trip={trip}/>)}
                     </div>
                   </div>
                 )}

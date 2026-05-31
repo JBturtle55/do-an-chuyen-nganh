@@ -24,20 +24,14 @@ async function buildSystemPrompt() {
     const Trip  = require('./models/Trip');
 
     const nowDate   = new Date();
-    const todayEnd  = new Date(nowDate); todayEnd.setHours(23, 59, 59, 999);
-    const tmrStart  = new Date(todayEnd.getTime() + 1);
-    const tmrEnd    = new Date(tmrStart); tmrEnd.setHours(23, 59, 59, 999);
+    const sevenDaysLater = new Date(nowDate.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-    const [routes, todayTrips, tmrTrips] = await Promise.all([
+    const [routes, upcomingTrips] = await Promise.all([
       Route.find({}).lean(),
-      // Hôm nay: tất cả chuyến còn lại, 1 chuyến đầu mỗi tuyến
-      Trip.find({ status: 'scheduled', departureTime: { $gte: nowDate, $lte: todayEnd } })
+      // 7 ngày tới: lấy tất cả chuyến, sau đó group và pick theo ngày
+      Trip.find({ status: 'scheduled', departureTime: { $gte: nowDate, $lte: sevenDaysLater } })
         .populate('route', 'from to').populate('bus', 'type seatCount')
-        .sort('departureTime').limit(100).lean(),
-      // Ngày mai: 1 chuyến đầu mỗi tuyến
-      Trip.find({ status: 'scheduled', departureTime: { $gte: tmrStart, $lte: tmrEnd } })
-        .populate('route', 'from to').populate('bus', 'type seatCount')
-        .sort('departureTime').limit(100).lean(),
+        .sort('departureTime').limit(500).lean(),
     ]);
 
     // Tuyến đường (compact)
@@ -48,14 +42,13 @@ async function buildSystemPrompt() {
       return `${r.from}→${r.to}: ${r.distance ?? '?'}km ${dur} từ ${fmt(r.basePrice)}đ`;
     }).join('\n');
 
-    // Lấy 1 chuyến đầu mỗi tuyến cho mỗi ngày
-    function pickFirstPerRoute(list) {
-      const seen = new Set();
-      return list.filter(t => {
-        const k = `${t.route?.from}→${t.route?.to}`;
-        if (seen.has(k)) return false;
-        seen.add(k); return true;
-      });
+    const pad = n => String(n).padStart(2, '0');
+
+    function toDateISO(d) {
+      const t = new Date(d);
+      // convert to Asia/Ho_Chi_Minh offset +7
+      const local = new Date(t.getTime() + 7 * 60 * 60 * 1000);
+      return `${local.getUTCFullYear()}-${pad(local.getUTCMonth()+1)}-${pad(local.getUTCDate())}`;
     }
 
     function formatTrip(t) {
@@ -67,24 +60,39 @@ async function buildSystemPrompt() {
       return `${t.route?.from}→${t.route?.to}: ${fmtTime(t.departureTime)}${arr} ${fmt(price)}đ${sale} còn ${t.availableSeats ?? '?'}ghế${bus}`;
     }
 
-    const todayFiltered = pickFirstPerRoute(todayTrips);
-    const tmrFiltered   = pickFirstPerRoute(tmrTrips);
+    // Group theo ngày, lấy 1 chuyến đầu mỗi tuyến mỗi ngày
+    const byDate = {};
+    for (const t of upcomingTrips) {
+      const iso = toDateISO(t.departureTime);
+      if (!byDate[iso]) byDate[iso] = [];
+      byDate[iso].push(t);
+    }
 
-    const todayLabel = nowDate.toLocaleDateString('vi-VN', { weekday:'long', day:'2-digit', month:'2-digit', year:'numeric', timeZone:'Asia/Ho_Chi_Minh' });
-    const tmrLabel   = tmrStart.toLocaleDateString('vi-VN', { weekday:'long', day:'2-digit', month:'2-digit', year:'numeric', timeZone:'Asia/Ho_Chi_Minh' });
+    function pickFirstPerRoute(list) {
+      const seen = new Set();
+      return list.filter(t => {
+        const k = `${t.route?.from}→${t.route?.to}`;
+        if (seen.has(k)) return false;
+        seen.add(k); return true;
+      });
+    }
 
-    const pad = n => String(n).padStart(2, '0');
-    const todayISO = `${nowDate.getFullYear()}-${pad(nowDate.getMonth()+1)}-${pad(nowDate.getDate())}`;
-    const tmrISO   = `${tmrStart.getFullYear()}-${pad(tmrStart.getMonth()+1)}-${pad(tmrStart.getDate())}`;
+    const todayISO = toDateISO(nowDate);
+    const tmrDate  = new Date(nowDate.getTime() + 24 * 60 * 60 * 1000);
+    const tmrISO   = toDateISO(tmrDate);
 
-    const tripSection =
-      `HÔM NAY — ${todayLabel} (${todayTrips.length} chuyến):\n` +
-      (todayFiltered.length > 0 ? todayFiltered.map(formatTrip).join('\n') : '(Hết chuyến hôm nay)') +
-      `\n\nNGÀY MAI — ${tmrLabel} (${tmrTrips.length} chuyến):\n` +
-      (tmrFiltered.length > 0 ? tmrFiltered.map(formatTrip).join('\n') : '(Chưa có lịch)');
+    const tripSection = Object.keys(byDate).sort().map(iso => {
+      const dayTrips   = byDate[iso];
+      const filtered   = pickFirstPerRoute(dayTrips);
+      const dateLabel  = new Date(iso + 'T00:00:00+07:00')
+        .toLocaleDateString('vi-VN', { weekday:'long', day:'2-digit', month:'2-digit', year:'numeric', timeZone:'Asia/Ho_Chi_Minh' });
+      const tag = iso === todayISO ? ' (HÔM NAY)' : iso === tmrISO ? ' (NGÀY MAI)' : '';
+      return `${dateLabel}${tag} — ${dayTrips.length} chuyến:\n` + filtered.map(formatTrip).join('\n');
+    }).join('\n\n');
 
-    const todaySummary = todayTrips.length > 0
-      ? `Hôm nay còn ${todayTrips.length} chuyến.`
+    const todayCount  = (byDate[todayISO] || []).length;
+    const todaySummary = todayCount > 0
+      ? `Hôm nay còn ${todayCount} chuyến.`
       : 'Hôm nay không còn chuyến nào.';
 
     const prompt = `Bạn là trợ lý AI FASTBUS. Hôm nay: ${nowDate.toLocaleDateString('vi-VN', { weekday:'long', day:'2-digit', month:'2-digit', year:'numeric', timeZone:'Asia/Ho_Chi_Minh' })}.
@@ -112,7 +120,11 @@ CÁCH TRẢ LỜI:
   (nếu có sale thêm: 🔥 giảm X%)
 - Tối đa 5 chuyến, nếu nhiều hơn ghi "(và X chuyến khác, xem đầy đủ trên website)"
 - Hỏi đơn hàng cụ thể: "Bạn vui lòng liên hệ hotline 1900 599 997 hoặc nhắn cho nhân viên hỗ trợ để mình kiểm tra nhé!"
-- Không bịa thông tin ngoài dữ liệu đã có
+
+QUAN TRỌNG — KHÔNG BỊA DỮ LIỆU CHUYẾN ĐI:
+- CHỈ được dùng thông tin giờ, giá, số ghế từ mục CHUYẾN ĐI bên trên
+- Nếu không tìm thấy chuyến cho tuyến đó trong CHUYẾN ĐI, PHẢI trả lời: "Hiện không có lịch chuyến [tuyến đó] trong 7 ngày tới. Bạn vui lòng tìm kiếm trên website để xem lịch đầy đủ nhé!"
+- TUYỆT ĐỐI không tự tạo ra giờ khởi hành, giá vé, số ghế — chỉ dùng đúng số liệu đã có
 
 ACTION TAG (bắt buộc khi đề cập chuyến cụ thể):
 Khi người dùng hỏi về tuyến đường cụ thể và bạn có dữ liệu chuyến đi, hãy thêm vào DÒNG CUỐI CÙNG của câu trả lời:
