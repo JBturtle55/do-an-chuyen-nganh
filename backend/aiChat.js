@@ -27,20 +27,17 @@ async function buildSystemPrompt() {
     const sevenDaysLater = new Date(nowDate.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     const [routes, upcomingTrips] = await Promise.all([
-      Route.find({}).lean(),
-      // 7 ngày tới: lấy tất cả chuyến, sau đó group và pick theo ngày
+      Route.find({}, 'from to basePrice').lean(),
+      // 7 ngày tới — token được giới hạn bằng cap MỖI NGÀY bên dưới, không phải độ rộng cửa sổ
       Trip.find({ status: 'scheduled', departureTime: { $gte: nowDate, $lte: sevenDaysLater } })
-        .populate('route', 'from to').populate('bus', 'type seatCount')
+        .populate('route', 'from to').populate('bus', 'type')
         .sort('departureTime').limit(500).lean(),
     ]);
 
-    // Tuyến đường (compact)
-    const routeSection = routes.map(r => {
-      const h = r.duration ? Math.floor(r.duration / 60) : 0;
-      const m = r.duration ? r.duration % 60 : 0;
-      const dur = r.duration ? `${h > 0 ? h + 'h' : ''}${m > 0 ? m + 'p' : ''}` : '';
-      return `${r.from}→${r.to}: ${r.distance ?? '?'}km ${dur} từ ${fmt(r.basePrice)}đ`;
-    }).join('\n');
+    // Thành phố phục vụ (compact) — thay cho việc liệt kê toàn bộ ~342 tuyến (vốn ngốn ~10k token)
+    const cities = [...new Set(routes.flatMap(r => [r.from, r.to]).filter(Boolean))].sort();
+    const minPrice = routes.reduce((mn, r) => (r.basePrice && r.basePrice < mn ? r.basePrice : mn), Infinity);
+    const citySection = cities.join(', ');
 
     const pad = n => String(n).padStart(2, '0');
 
@@ -54,10 +51,9 @@ async function buildSystemPrompt() {
     function formatTrip(t) {
       const isSale = t.salePercent > 0 && (!t.saleEndsAt || new Date(t.saleEndsAt) > nowDate);
       const price  = isSale ? Math.round(t.price * (1 - t.salePercent / 100)) : t.price;
-      const arr    = t.arrivalTime ? `→${fmtTime(t.arrivalTime)}` : '';
       const sale   = isSale ? ` 🔥-${t.salePercent}%` : '';
       const bus    = t.bus ? ` ${t.bus.type}` : '';
-      return `${t.route?.from}→${t.route?.to}: ${fmtTime(t.departureTime)}${arr} ${fmt(price)}đ${sale} còn ${t.availableSeats ?? '?'}ghế${bus}`;
+      return `${t.route?.from}→${t.route?.to}: ${fmtTime(t.departureTime)} ${fmt(price)}đ${sale} còn ${t.availableSeats ?? '?'}ghế${bus}`;
     }
 
     // Group theo ngày, lấy 1 chuyến đầu mỗi tuyến mỗi ngày
@@ -81,13 +77,16 @@ async function buildSystemPrompt() {
     const tmrDate  = new Date(nowDate.getTime() + 24 * 60 * 60 * 1000);
     const tmrISO   = toDateISO(tmrDate);
 
+    const MAX_PER_DAY = 6;   // cap mỗi ngày → ~7×6=42 dòng, đủ nhẹ cho TPM 6000 nhưng phủ cả tuần
     const tripSection = Object.keys(byDate).sort().map(iso => {
-      const dayTrips   = byDate[iso];
-      const filtered   = pickFirstPerRoute(dayTrips);
-      const dateLabel  = new Date(iso + 'T00:00:00+07:00')
+      const dayTrips = byDate[iso];
+      let filtered   = pickFirstPerRoute(dayTrips);
+      let extra = '';
+      if (filtered.length > MAX_PER_DAY) { extra = `\n(và ${filtered.length - MAX_PER_DAY} tuyến khác — xem website)`; filtered = filtered.slice(0, MAX_PER_DAY); }
+      const dateLabel = new Date(iso + 'T00:00:00+07:00')
         .toLocaleDateString('vi-VN', { weekday:'long', day:'2-digit', month:'2-digit', year:'numeric', timeZone:'Asia/Ho_Chi_Minh' });
       const tag = iso === todayISO ? ' (HÔM NAY)' : iso === tmrISO ? ' (NGÀY MAI)' : '';
-      return `${dateLabel}${tag} — ${dayTrips.length} chuyến:\n` + filtered.map(formatTrip).join('\n');
+      return `${dateLabel}${tag} — ${dayTrips.length} chuyến:\n` + filtered.map(formatTrip).join('\n') + extra;
     }).join('\n\n');
 
     const todayCount  = (byDate[todayISO] || []).length;
@@ -98,10 +97,10 @@ async function buildSystemPrompt() {
     const prompt = `Bạn là trợ lý AI FASTBUS. Hôm nay: ${nowDate.toLocaleDateString('vi-VN', { weekday:'long', day:'2-digit', month:'2-digit', year:'numeric', timeZone:'Asia/Ho_Chi_Minh' })}.
 ${todaySummary}
 
-TUYẾN ĐƯỜNG (from→to|km|thời gian|giá):
-${routeSection}
+THÀNH PHỐ PHỤC VỤ (có tuyến 2 chiều giữa các TP này, giá vé từ ~${fmt(minPrice === Infinity ? 100000 : minPrice)}đ):
+${citySection}
 
-CHUYẾN ĐI (1 chuyến đại diện mỗi tuyến, hỏi cụ thể sẽ trả lời thêm):
+CHUYẾN ĐI 7 NGÀY TỚI (mỗi ngày vài tuyến đại diện, hỏi cụ thể sẽ trả lời thêm):
 ${tripSection}
 THÔNG TIN FASTBUS:
 - Đặt vé 24/7, chọn ghế, thanh toán FASTPAY hoặc MoMo
@@ -121,10 +120,10 @@ CÁCH TRẢ LỜI:
 - Tối đa 5 chuyến, nếu nhiều hơn ghi "(và X chuyến khác, xem đầy đủ trên website)"
 - Hỏi đơn hàng cụ thể: "Bạn vui lòng liên hệ hotline 1900 599 997 hoặc nhắn cho nhân viên hỗ trợ để mình kiểm tra nhé!"
 
-QUAN TRỌNG — KHÔNG BỊA DỮ LIỆU CHUYẾN ĐI:
-- CHỈ được dùng thông tin giờ, giá, số ghế từ mục CHUYẾN ĐI bên trên
-- Nếu không tìm thấy chuyến cho tuyến đó trong CHUYẾN ĐI, PHẢI trả lời: "Hiện không có lịch chuyến [tuyến đó] trong 7 ngày tới. Bạn vui lòng tìm kiếm trên website để xem lịch đầy đủ nhé!"
-- TUYỆT ĐỐI không tự tạo ra giờ khởi hành, giá vé, số ghế — chỉ dùng đúng số liệu đã có
+QUAN TRỌNG:
+- DANH SÁCH THÀNH PHỐ là nguồn chuẩn về tuyến: nếu CẢ điểm đi và điểm đến đều nằm trong danh sách → tuyến đó CÓ chạy (2 chiều). Hãy xác nhận "có tuyến" và mời khách bấm xem giờ/giá cụ thể (kèm ACTION tag) — KHÔNG nói "không có".
+- Chỉ trả lời "không có tuyến này" khi MỘT trong hai địa điểm KHÔNG có trong danh sách thành phố.
+- Mục CHUYẾN ĐI chỉ là VÍ DỤ về giá/giờ, KHÔNG đầy đủ. Chỉ nêu giờ/giá/số ghế CỤ THỂ khi nó xuất hiện trong mục CHUYẾN ĐI; nếu không có, nói "bạn bấm xem chi tiết giờ & giá nhé" thay vì bịa số liệu.
 
 ACTION TAG (bắt buộc khi đề cập chuyến cụ thể):
 Khi người dùng hỏi về tuyến đường cụ thể và bạn có dữ liệu chuyến đi, hãy thêm vào DÒNG CUỐI CÙNG của câu trả lời:
@@ -132,7 +131,7 @@ Khi người dùng hỏi về tuyến đường cụ thể và bạn có dữ li
 Ví dụ hôm nay (${todayISO}): [ACTION:search:Hồ Chí Minh:Hà Nội:${todayISO}]
 Ví dụ ngày mai (${tmrISO}): [ACTION:search:Đà Nẵng:Hà Nội:${tmrISO}]
 Quy tắc:
-- Tên điểm phải khớp chính xác với tên trong dữ liệu TUYẾN ĐƯỜNG ở trên
+- Tên điểm phải khớp chính xác với tên trong danh sách THÀNH PHỐ PHỤC VỤ ở trên
 - Chỉ thêm khi đề cập chuyến cụ thể, KHÔNG thêm khi hỏi chung chung về giá/chính sách
 - Không giải thích hay nhắc đến tag này trong câu trả lời`;
 
