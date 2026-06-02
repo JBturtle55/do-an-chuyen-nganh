@@ -19,9 +19,10 @@ async function optionalAuth(req, res, next) {
 }
 
 function getIdentity(req) {
+  const convId = req.body?.conversationId || req.query?.conversationId;
   if (req.user) {
     return {
-      conversationId: req.user._id.toString(),
+      conversationId: convId || req.user._id.toString(),  // id phiên; fallback userId (tương thích cũ)
       userId:         req.user._id,
       guestId:        null,
       guestName:      null,
@@ -29,7 +30,7 @@ function getIdentity(req) {
       isGuest:        false,
     };
   }
-  const guestId    = req.body?.guestId || req.query?.guestId;
+  const guestId    = convId || req.body?.guestId || req.query?.guestId;
   const guestName  = req.body?.guestName  || 'Khách';
   const guestPhone = req.body?.guestPhone || null;
   const guestEmail = req.body?.guestEmail || null;
@@ -46,11 +47,20 @@ function getIdentity(req) {
   };
 }
 
+// User đăng nhập gửi conversationId tuỳ ý → chặn đọc/ghi vào hội thoại của người khác.
+// Hội thoại "của mình" = chưa có tin user nào (mới tinh) HOẶC tin user có userId trùng.
+async function ownsConversation(req, conversationId) {
+  if (!req.user) return true;  // khách: ranh giới là guestId ngẫu nhiên
+  const claim = await ChatMessage.findOne({ conversationId, userId: { $ne: null } }).select('userId').lean();
+  return !claim || claim.userId.toString() === req.user._id.toString();
+}
+
 // GET /api/chat/messages
 router.get('/messages', optionalAuth, async (req, res) => {
   try {
     const id = getIdentity(req);
     if (!id) return res.json([]);
+    if (!(await ownsConversation(req, id.conversationId))) return res.json([]);
     const messages = await ChatMessage.find({ conversationId: id.conversationId })
       .sort({ createdAt: 1 }).lean();
     await ChatMessage.updateMany(
@@ -65,7 +75,9 @@ router.get('/messages', optionalAuth, async (req, res) => {
 router.post('/messages', optionalAuth, async (req, res) => {
   try {
     const id = getIdentity(req);
-    if (!id) return res.status(400).json({ message: 'Thiếu guestId' });
+    if (!id) return res.status(400).json({ message: 'Thiếu conversationId' });
+    if (!(await ownsConversation(req, id.conversationId)))
+      return res.status(403).json({ message: 'Không có quyền với hội thoại này' });
     const content = req.body.content?.trim();
     if (!content) return res.status(400).json({ message: 'Nội dung không được để trống' });
 
@@ -136,17 +148,20 @@ router.get('/unread', optionalAuth, async (req, res) => {
 // GET /api/chat/events — SSE realtime
 router.get('/events', async (req, res) => {
   let conversationId;
-  const { token, guestId } = req.query;
+  const { token, guestId, conversationId: cid } = req.query;
 
   if (token) {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const user    = await User.findById(decoded.id).select('_id');
       if (!user) return res.status(401).end();
-      conversationId = user._id.toString();
+      conversationId = cid || user._id.toString();
+      // ownership: không cho subscribe hội thoại của người khác
+      const claim = await ChatMessage.findOne({ conversationId, userId: { $ne: null } }).select('userId').lean();
+      if (claim && claim.userId.toString() !== user._id.toString()) return res.status(403).end();
     } catch (_) { return res.status(401).end(); }
-  } else if (guestId) {
-    conversationId = guestId;
+  } else if (cid || guestId) {
+    conversationId = cid || guestId;
   } else {
     return res.status(400).end();
   }

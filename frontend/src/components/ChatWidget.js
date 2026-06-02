@@ -15,13 +15,17 @@ const C = {
 function fmtTime(ts) {
   return new Date(ts).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 }
-function createGuestId() {
-  const id = 'guest_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-  localStorage.setItem('chatGuestId', id);
+// conversationId phiên — dùng chung cho cả khách lẫn user đăng nhập (mô hình Chatwoot:
+// mỗi "cuộc hội thoại" là 1 thread riêng). Bấm "hội thoại mới" → id mới = thread mới sạch.
+function convKey(user) { return user ? `chatConv_${user._id}` : 'chatGuestId'; }
+function genConvId(user) { return (user ? 'u_' + user._id : 'guest') + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8); }
+function newConvId(user) { const id = genConvId(user); localStorage.setItem(convKey(user), id); return id; }
+function getOrCreateConvId(user) {
+  const key = convKey(user);
+  let id = localStorage.getItem(key);
+  // Lần đầu: user đăng nhập mặc định = userId (tiếp tục thread cũ trên server nếu có); khách → id mới
+  if (!id) { id = user ? String(user._id) : genConvId(null); localStorage.setItem(key, id); }
   return id;
-}
-function getOrCreateGuestId() {
-  return localStorage.getItem('chatGuestId') || createGuestId();
 }
 function loadAIHistory() {
   try { return JSON.parse(localStorage.getItem('aiChatHistory') || '[]'); } catch { return []; }
@@ -320,11 +324,10 @@ function AIChatPanel() {
 //  SUPPORT CHAT PANEL
 // ════════════════════════════════════════════════════════════════════════════════
 function SupportChatPanel({ user, isVisible }) {
-  // guestId trong state để khi tạo mới thì re-fetch
-  const [guestId,     setGuestId]     = useState(() => user ? null : getOrCreateGuestId());
+  // conversationId phiên (cả khách lẫn user đăng nhập) — đổi id = thread mới sạch
+  const [convId,      setConvId]      = useState(() => getOrCreateConvId(user));
   const [messages,    setMessages]    = useState([]);
   const [convStatus,  setConvStatus]  = useState('active'); // 'active' | 'completed'
-  const [reactivated, setReactivated] = useState(false);    // user bấm "nhắn lại" → mở input dù server còn 'completed'
   const [input,       setInput]       = useState('');
   const [sending,     setSending]     = useState(false);
   const [loading,     setLoading]     = useState(true);
@@ -346,24 +349,20 @@ function SupportChatPanel({ user, isVisible }) {
     }
   }, [messages]);
 
-  const params = user ? {} : { guestId };
-
   const fetchAll = useCallback(async () => {
     try {
       const [msgRes, statusRes] = await Promise.all([
-        chatGetMessages(params),
-        chatGetStatus(params),
+        chatGetMessages({ conversationId: convId }),
+        chatGetStatus({ conversationId: convId }),
       ]);
       setMessages(msgRes.data);
       setConvStatus(statusRes.data.status || 'active');
     } catch {} finally { setLoading(false); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, guestId]);
+  }, [convId]);
 
-  // Initial fetch — chỉ chạy khi component mount hoặc user/guestId đổi
+  // Initial fetch — chạy khi mount hoặc convId đổi (đổi convId = thread mới)
   useEffect(() => {
     initialScroll.current = false;
-    setReactivated(false);
     setLoading(true);
     fetchAll();
   }, [fetchAll]);
@@ -372,9 +371,9 @@ function SupportChatPanel({ user, isVisible }) {
   useEffect(() => {
     const base  = process.env.REACT_APP_API_URL || 'https://booking.longvan.vn/api';
     const token = localStorage.getItem('token');
-    const qs = (user && token) ? `token=${encodeURIComponent(token)}`
-             : (guestId ? `guestId=${encodeURIComponent(guestId)}` : null);
-    if (!qs) return;
+    if (!convId) return;
+    // logged-in: token để auth + ownership; conversationId xác định thread
+    const qs = `conversationId=${encodeURIComponent(convId)}` + ((user && token) ? `&token=${encodeURIComponent(token)}` : '');
     const es = new EventSource(`${base}/chat/events?${qs}`);
     es.onmessage = (e) => {
       try {
@@ -383,7 +382,7 @@ function SupportChatPanel({ user, isVisible }) {
       } catch (_) {}
     };
     return () => es.close();
-  }, [user, guestId, fetchAll]);
+  }, [user, convId, fetchAll]);
 
   // Polling fallback — giãn 15s (SSE lo realtime); chỉ chạy khi panel mở
   useEffect(() => {
@@ -399,40 +398,26 @@ function SupportChatPanel({ user, isVisible }) {
     setMessages(prev => [...prev, optimistic]);
     setInput('');
     try {
-      const payload = { content: text };
-      if (!user) payload.guestId = guestId;
-      const res = await chatSend(payload);
+      const res = await chatSend({ content: text, conversationId: convId });
       setMessages(prev => prev.map(m => m._id === optimistic._id ? res.data : m));
       setConvStatus('active'); // backend auto-reopen, cập nhật local luôn
     } catch {
       setMessages(prev => prev.filter(m => m._id !== optimistic._id));
       setInput(text);
     } finally { setSending(false); }
-  }, [input, sending, user, guestId]);
+  }, [input, sending, convId]);
 
-  // Bắt đầu / tiếp tục hội thoại sau khi admin hoàn thành
+  // Bắt đầu hội thoại MỚI (Chatwoot-style) — id phiên mới = thread mới, xoá sạch tin cũ khỏi view.
+  // Hội thoại cũ vẫn còn trên server (admin xem được như 1 hội thoại riêng).
   const handleNewConversation = () => {
-    if (user) {
-      // User đăng nhập: cùng 1 hội thoại (conversationId = userId). Chỉ mở lại input;
-      // gửi tin sẽ tự reopen ở backend. Giữ lịch sử cũ.
-      setReactivated(true);
-      return;
-    }
-    // Khách: tạo guestId mới = thread hoàn toàn mới
-    localStorage.removeItem('chatGuestId');
-    const newId = createGuestId();
-    setGuestId(newId);
+    const id = newConvId(user);
+    setConvId(id);
     setMessages([]);
     setConvStatus('active');
-    setReactivated(false);
     initialScroll.current = false;
   };
 
-  // Khi hội thoại đã active trở lại (đã gửi tin / reopen) → bỏ cờ reactivated để
-  // lần admin hoàn thành SAU vẫn hiện banner đúng.
-  useEffect(() => { if (convStatus === 'active') setReactivated(false); }, [convStatus]);
-
-  const isCompleted = convStatus === 'completed' && !reactivated;
+  const isCompleted = convStatus === 'completed';
 
   // Group by day + consecutive sender
   const grouped = messages.map((msg, i) => ({
@@ -564,8 +549,7 @@ function ChatWidgetInner({ user }) {
     if (open) return;
     const fetch = async () => {
       try {
-        const params = user ? {} : { guestId: getOrCreateGuestId() };
-        const res = await chatGetUnread(params);
+        const res = await chatGetUnread({ conversationId: getOrCreateConvId(user) });
         setUnread(res.data.count);
       } catch {}
     };
