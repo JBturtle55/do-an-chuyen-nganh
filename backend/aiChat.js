@@ -154,42 +154,68 @@ Quy tắc:
   }
 }
 
-async function getAIReply(userMessage, history = []) {
-  if (!process.env.GROQ_API_KEY) return null;
+// ── Gemini (primary — free tier rộng, chất lượng tốt hơn llama-8b) ──
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+let _gemini = null;
+function getGemini() {
+  if (!_gemini && process.env.GEMINI_API_KEY) _gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  return _gemini;
+}
 
-  try {
-    const client       = getClient();
-    const systemPrompt = await buildSystemPrompt();
-
-    const messages = [{ role: 'system', content: systemPrompt }];
-    // Chỉ giữ 6 tin nhắn gần nhất để giảm token
-    const recentHistory = history.slice(-7, -1);
-    for (const msg of recentHistory) {
-      messages.push({ role: msg.sender === 'user' ? 'user' : 'assistant', content: msg.content });
-    }
-    messages.push({ role: 'user', content: userMessage });
-
-    const completion = await client.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
-      messages,
-      max_tokens: 320,
-      temperature: 0.4,
-    });
-
-    let text = completion.choices[0]?.message?.content?.trim() || null;
-    if (!text) return null;
-
-    let action = null;
-    const m = text.match(/\[ACTION:search:([^\]:]+):([^\]:]+):(\d{4}-\d{2}-\d{2})\]/);
-    if (m) {
-      action = { type: 'search', from: m[1].trim(), to: m[2].trim(), date: m[3] };
-      text = text.replace(m[0], '').trim();
-    }
-    return { text, action };
-  } catch (err) {
-    console.error('[AI Chat] Lỗi Groq API:', err.message);
-    return null;
+async function callGemini(systemPrompt, history, userMessage) {
+  const g = getGemini();
+  if (!g) return null;
+  const model = g.getGenerativeModel({
+    model: 'gemini-2.5-flash',
+    systemInstruction: systemPrompt,
+    generationConfig: { maxOutputTokens: 800, temperature: 0.4 },
+  }, { timeout: 7000 });  // fail nhanh để fallback Groq, tránh SDK retry 503 kéo dài ~44s
+  const contents = [];
+  for (const msg of history.slice(-7, -1)) {
+    contents.push({ role: msg.sender === 'user' ? 'user' : 'model', parts: [{ text: msg.content }] });
   }
+  // Gemini yêu cầu content đầu phải là 'user'
+  while (contents.length && contents[0].role === 'model') contents.shift();
+  contents.push({ role: 'user', parts: [{ text: userMessage }] });
+  const r = await model.generateContent({ contents });
+  return r.response.text()?.trim() || null;
+}
+
+// ── Groq (fallback — nhanh, nhưng TPM 6000 chật) ──
+async function callGroq(systemPrompt, history, userMessage) {
+  if (!process.env.GROQ_API_KEY) return null;
+  const client = getClient();
+  const messages = [{ role: 'system', content: systemPrompt }];
+  for (const msg of history.slice(-7, -1)) {
+    messages.push({ role: msg.sender === 'user' ? 'user' : 'assistant', content: msg.content });
+  }
+  messages.push({ role: 'user', content: userMessage });
+  const completion = await client.chat.completions.create({
+    model: 'llama-3.1-8b-instant', messages, max_tokens: 320, temperature: 0.4,
+  });
+  return completion.choices[0]?.message?.content?.trim() || null;
+}
+
+async function getAIReply(userMessage, history = []) {
+  const systemPrompt = await buildSystemPrompt();
+
+  let text = null;
+  // Ưu tiên Gemini; nếu lỗi/null thì fallback Groq
+  try { text = await callGemini(systemPrompt, history, userMessage); }
+  catch (err) { console.error('[AI Chat] Gemini lỗi → fallback Groq:', err.message); }
+  if (!text) {
+    try { text = await callGroq(systemPrompt, history, userMessage); }
+    catch (err) { console.error('[AI Chat] Groq lỗi:', err.message); }
+  }
+  if (!text) return null;
+
+  let action = null;
+  const m = text.match(/\[ACTION:search:([^\]:]+):([^\]:]+):(\d{4}-\d{2}-\d{2})\]/);
+  if (m) {
+    action = { type: 'search', from: m[1].trim(), to: m[2].trim(), date: m[3] };
+    text = text.replace(m[0], '').trim();
+  }
+  return { text, action };
 }
 
 // Warm up cache khi server khởi động
