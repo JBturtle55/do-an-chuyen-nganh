@@ -19,13 +19,14 @@ function normVN(s) {                 // bỏ dấu + bỏ ký tự đặc biệt
 }
 const CITY_ALIAS = {
   'TP. Hồ Chí Minh': ['ho chi minh', 'hcm', 'sai gon', 'saigon', 'tphcm', 'sg'],
-  'Hà Nội': ['ha noi', 'hn'],
-  'Đà Nẵng': ['da nang', 'dn'],
+  'Hà Nội': ['ha noi', 'hanoi', 'hn'],
+  'Đà Nẵng': ['da nang', 'danang', 'dn'],
   'Đà Lạt': ['da lat', 'dalat', 'dl'],
-  'Nha Trang': ['nha trang', 'nt'],
+  'Nha Trang': ['nha trang', 'nhatrang', 'nt'],
   'Cần Thơ': ['can tho', 'ct'],
-  'Vũng Tàu': ['vung tau', 'vt'],
-  'Hải Phòng': ['hai phong', 'hp'],
+  'Vũng Tàu': ['vung tau', 'vungtau', 'vt'],
+  'Hải Phòng': ['hai phong', 'haiphong', 'hp'],
+  'Quảng Ninh': ['quang ninh', 'ha long', 'halong'],
   'Buôn Ma Thuột': ['buon ma thuot', 'bmt', 'ban me thuot'],
 };
 function cityTokens(name) { return [...new Set([normVN(name), ...(CITY_ALIAS[name] || [])])].filter(Boolean); }
@@ -248,6 +249,12 @@ function detectRoute(message, routes) {
   const uniq = [];
   for (const h of hits) if (!uniq.some(u => u.city === h.city)) uniq.push(h);
   if (uniq.length < 2) return null;               // cần đủ 2 thành phố (theo thứ tự xuất hiện)
+
+  // Mặc định: thành phố xuất hiện trước = điểm đi. Nhưng "đi Y từ X" → X mới là điểm đi → đảo.
+  const fromKw = msgN.lastIndexOf(' tu ');         // 'từ' (đã bỏ dấu)
+  if (fromKw >= 0 && uniq[0].idx < fromKw && uniq[1].idx > fromKw) {
+    return { from: uniq[1].city, to: uniq[0].city };
+  }
   return { from: uniq[0].city, to: uniq[1].city };
 }
 
@@ -255,7 +262,7 @@ function detectDate(message, todayVN) {
   const s = stripAccent(message);                 // giữ "/" và "-" để bắt dd/mm
   if (/ngay\s*kia|hom\s*kia/.test(s)) return vnYMD(new Date(Date.now() + 2 * 86400000));
   if (/ngay\s*mai|\bmai\b/.test(s))   return vnYMD(new Date(Date.now() + 1 * 86400000));
-  const m = s.match(/\b(\d{1,2})\s*[\/\-]\s*(\d{1,2})\b/);
+  const m = s.match(/\b(\d{1,2})\s*(?:[\/\-.]|thang)\s*(\d{1,2})\b/);  // 8/6, 8-6, 8.6, "8 thang 6"
   if (m) { const dd = +m[1], mm = +m[2]; if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) return { y: todayVN.y, m: mm, d: dd }; }
   return todayVN;
 }
@@ -327,4 +334,4 @@ async function getAIReply(userMessage, history = []) {
 // Warm up cache khi server khởi động
 buildSystemPrompt().catch(() => {});
 
-module.exports = { getAIReply };
+module.exports = { getAIReply, retrieveTrips };
