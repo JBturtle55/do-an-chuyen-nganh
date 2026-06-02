@@ -2104,20 +2104,34 @@ function ChatTab() {
     loadConvos(statusTab);
   }, [statusTab, loadConvos]);
 
-  // Polling 4s
-  useEffect(() => {
-    const iv = setInterval(async () => {
-      try {
-        const r = await adminChatConversations(statusRef.current);
-        setConvos(r.data);
-        if (selectedRef.current) {
-          const r2 = await adminChatMessages(selectedRef.current._id);
-          setThreadMsgs(r2.data);
-        }
-      } catch {}
-    }, 4000);
-    return () => clearInterval(iv);
+  const refresh = useCallback(async () => {
+    try {
+      const r = await adminChatConversations(statusRef.current);
+      setConvos(r.data);
+      if (selectedRef.current) {
+        const r2 = await adminChatMessages(selectedRef.current._id);
+        setThreadMsgs(r2.data);
+      }
+    } catch {}
   }, []);
+
+  // SSE realtime — admin nhận tin nhắn user mới ngay lập tức
+  useEffect(() => {
+    const base  = process.env.REACT_APP_API_URL || 'https://booking.longvan.vn/api';
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    const es = new EventSource(`${base}/admin/chat/events?token=${encodeURIComponent(token)}`);
+    es.onmessage = (e) => {
+      try { if (JSON.parse(e.data)?.type === 'new_message') refresh(); } catch (_) {}
+    };
+    return () => es.close();
+  }, [refresh]);
+
+  // Polling fallback — giãn 15s (SSE lo realtime)
+  useEffect(() => {
+    const iv = setInterval(refresh, 15000);
+    return () => clearInterval(iv);
+  }, [refresh]);
 
   const selectConvo = async (convo) => {
     const name  = convo.user?.[0]?.name  || convo.lastMessage?.guestName || `Khách #${convo._id?.slice(-4)}`;

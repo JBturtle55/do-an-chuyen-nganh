@@ -366,9 +366,23 @@ function SupportChatPanel({ user, isVisible }) {
     fetchAll();
   }, [fetchAll]);
 
-  // Polling — restart khi isVisible đổi, nhưng không reset loading
+  // SSE realtime — nhận tin admin trả lời ngay lập tức
   useEffect(() => {
-    const iv = setInterval(() => { if (isVisible) fetchAll(); }, 4000);
+    const base  = process.env.REACT_APP_API_URL || 'https://booking.longvan.vn/api';
+    const token = localStorage.getItem('token');
+    const qs = (user && token) ? `token=${encodeURIComponent(token)}`
+             : (guestId ? `guestId=${encodeURIComponent(guestId)}` : null);
+    if (!qs) return;
+    const es = new EventSource(`${base}/chat/events?${qs}`);
+    es.onmessage = (e) => {
+      try { if (JSON.parse(e.data)?.type === 'new_message') fetchAll(); } catch (_) {}
+    };
+    return () => es.close();
+  }, [user, guestId, fetchAll]);
+
+  // Polling fallback — giãn 15s (SSE lo realtime); chỉ chạy khi panel mở
+  useEffect(() => {
+    const iv = setInterval(() => { if (isVisible) fetchAll(); }, 15000);
     return () => clearInterval(iv);
   }, [fetchAll, isVisible]);
 

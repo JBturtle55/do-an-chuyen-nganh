@@ -30,7 +30,30 @@ const upload = multer({
   },
 });
 
-// Tất cả admin routes đều cần protect + isAdmin
+// SSE cho admin — ĐẶT TRƯỚC router.use(protect) vì EventSource không gửi được header
+// Authorization → tự verify bằng token query thay vì qua middleware protect.
+router.get('/chat/events', async (req, res) => {
+  const token = req.query.token;
+  if (!token) return res.status(401).end();
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('role');
+    if (!user || user.role !== 'admin') return res.status(403).end();
+  } catch (_) { return res.status(401).end(); }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+  res.write(': connected\n\n');
+
+  addAdminClient(res);
+  const ka = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, 25000);
+  req.on('close', () => { clearInterval(ka); removeAdminClient(res); });
+});
+
+// Tất cả admin routes (trừ SSE ở trên) đều cần protect + isAdmin
 router.use(protect, isAdmin);
 // Xác nhận booking
 router.put('/bookings/:id/confirm', async (req, res) => {
@@ -388,28 +411,6 @@ router.delete('/routes/:id', async (req, res) => {
 });
 
 // ── Chat admin ───────────────────────────────────────────────
-
-// SSE cho admin (EventSource không gửi được header → dùng token query)
-router.get('/chat/events', async (req, res) => {
-  const token = req.query.token;
-  if (!token) return res.status(401).end();
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('role');
-    if (!user || user.role !== 'admin') return res.status(403).end();
-  } catch (_) { return res.status(401).end(); }
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders();
-  res.write(': connected\n\n');
-
-  addAdminClient(res);
-  const ka = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, 25000);
-  req.on('close', () => { clearInterval(ka); removeAdminClient(res); });
-});
 
 // Tổng số tin nhắn chưa đọc (từ user) để hiện badge
 router.get('/chat/unread-count', async (req, res) => {
