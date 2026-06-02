@@ -7,6 +7,7 @@ const tripSchema = new mongoose.Schema({
   arrivalTime:   { type: Date },
   price:         { type: Number, required: true },
   availableSeats:{ type: Number },
+  bookedSeats:   { type: [Number], default: [] },   // ghế đang giữ chỗ (active) — dùng để reserve atomic, chống đặt trùng
   status:        { type: String, enum: ['scheduled','cancelled','completed'], default: 'scheduled' },
   salePercent:   { type: Number, default: 0, min: 0, max: 100 },
   saleEndsAt:    { type: Date, default: null },

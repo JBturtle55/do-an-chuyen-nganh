@@ -162,6 +162,9 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'https://booking.longvan.vn';
 router.post('/wallet', protect, async (req, res) => {
   const { bookingId, voucherCode, pointsToUse = 0 } = req.body;
   let bookingClaimed = false;
+  // Theo dõi side-effect tiền/điểm đã thực hiện để rollback CHÍNH XÁC nếu lỗi giữa chừng
+  // (MongoDB standalone không hỗ trợ transaction → dùng compensating update)
+  let deductedWallet = 0, redeemedPoints = 0, earnedPointsApplied = 0, confirmed = false;
 
   try {
     const WalletTransaction = require('../models/WalletTransaction');
@@ -199,7 +202,8 @@ router.post('/wallet', protect, async (req, res) => {
     if (booking.expiresAt && new Date() > booking.expiresAt) {
       await Booking.findByIdAndUpdate(bookingId, { status: 'cancelled' });
       await require('../models/Trip').findByIdAndUpdate(booking.trip._id, {
-        $inc: { availableSeats: booking.seats.length }
+        $pull: { bookedSeats: { $in: booking.seats } },
+        $inc:  { availableSeats: booking.seats.length }
       });
       bookingClaimed = false;
       return res.status(400).json({ message: 'Booking đã hết hạn, vui lòng đặt lại' });
@@ -248,6 +252,7 @@ router.post('/wallet', protect, async (req, res) => {
         message: `Số dư ví không đủ. Cần ${finalPrice.toLocaleString('vi-VN')}đ, hiện có ${currentUser.walletBalance.toLocaleString('vi-VN')}đ`,
       });
     }
+    deductedWallet = finalPrice;
 
     // 4. Ghi lịch sử ví
     await WalletTransaction.create({
@@ -264,6 +269,7 @@ router.post('/wallet', protect, async (req, res) => {
         { $inc: { loyaltyPoints: -usedPoints } },
         { new: true }
       );
+      if (afterPoints) redeemedPoints = usedPoints;
       pointsBalance = afterPoints ? afterPoints.loyaltyPoints : pointsBalance;
       await PointTransaction.create({
         user: req.user.id, type: 'redeem', points: usedPoints,
@@ -280,6 +286,7 @@ router.post('/wallet', protect, async (req, res) => {
         { $inc: { loyaltyPoints: earnedPoints } },
         { new: true }
       );
+      earnedPointsApplied = earnedPoints;
       await PointTransaction.create({
         user: req.user.id, type: 'earn', points: earnedPoints,
         balance: afterEarn.loyaltyPoints,
@@ -304,6 +311,7 @@ router.post('/wallet', protect, async (req, res) => {
     if (!isRetry && usedPoints > 0) bookingUpdate.pointsUsed = usedPoints;
     await Booking.findByIdAndUpdate(bookingId, bookingUpdate);
     bookingClaimed = false;
+    confirmed = true;   // qua mốc này tiền đã hợp lệ → KHÔNG rollback dù bước sau (voucher/email) lỗi
 
     // 8. Tăng usedCount voucher sau khi booking đã confirmed (chỉ lần đầu)
     if (!isRetry && appliedVoucher) {
@@ -320,9 +328,26 @@ router.post('/wallet', protect, async (req, res) => {
       earnedPoints:  earnedPoints >= 1 ? earnedPoints : 0,
     });
   } catch (err) {
-    // Rollback booking về pending nếu lỗi giữa chừng
-    if (bookingClaimed && bookingId) {
-      await Booking.findByIdAndUpdate(bookingId, { status: 'pending' }).catch(() => {});
+    // Rollback: booking CHƯA confirmed → hoàn lại MỌI side-effect tiền/điểm đã thực hiện
+    if (!confirmed && bookingId) {
+      const User              = require('../models/User');
+      const WalletTransaction = require('../models/WalletTransaction');
+      const PointTransaction  = require('../models/PointTransaction');
+      const netPoints = redeemedPoints - earnedPointsApplied; // hoàn điểm đã dùng, trừ điểm đã tích nhầm
+      if (deductedWallet > 0 || netPoints !== 0) {
+        await User.findByIdAndUpdate(req.user.id, {
+          $inc: { walletBalance: deductedWallet, loyaltyPoints: netPoints },
+        }).catch(() => {});
+      }
+      // Xoá bản ghi của lần thanh toán hỏng (tránh lịch sử rác + để retry tạo lại Payment được)
+      await Promise.all([
+        WalletTransaction.deleteMany({ booking: bookingId }).catch(() => {}),
+        PointTransaction.deleteMany({ booking: bookingId }).catch(() => {}),
+        Payment.deleteMany({ booking: bookingId, status: 'success' }).catch(() => {}),
+      ]);
+      if (bookingClaimed) {
+        await Booking.findByIdAndUpdate(bookingId, { status: 'pending' }).catch(() => {});
+      }
     }
     res.status(500).json({ message: err.message });
   }
@@ -427,7 +452,10 @@ router.post('/vnpay/create', protect, async (req, res) => {
     // Kiểm tra hết hạn (chỉ cho lần đầu)
     if (!isRetry && booking.expiresAt && new Date() > booking.expiresAt) {
       await Booking.findByIdAndUpdate(bookingId, { status: 'cancelled' });
-      await require('../models/Trip').findByIdAndUpdate(booking.trip._id, { $inc: { availableSeats: booking.seats.length } });
+      await require('../models/Trip').findByIdAndUpdate(booking.trip._id, {
+        $pull: { bookedSeats: { $in: booking.seats } },
+        $inc:  { availableSeats: booking.seats.length }
+      });
       bookingClaimed = false;
       return res.status(400).json({ message: 'Booking đã hết hạn, vui lòng đặt lại' });
     }

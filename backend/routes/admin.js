@@ -189,9 +189,10 @@ router.put('/bookings/:id/cancel', async (req, res) => {
 
     await booking.save();
 
-    // Hoàn lại ghế
+    // Hoàn lại ghế (nhả khỏi bookedSeats + tăng availableSeats)
     await Trip.findByIdAndUpdate(booking.trip, {
-      $inc: { availableSeats: booking.seats.length }
+      $pull: { bookedSeats: { $in: booking.seats } },
+      $inc:  { availableSeats: booking.seats.length }
     });
     broadcast(booking.trip.toString(), { type: 'seats_updated' });
 

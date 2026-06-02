@@ -29,7 +29,7 @@ router.post('/', protect,
     if (invalidSeats.length)
       return res.status(400).json({ message: `Số ghế không hợp lệ: ${invalidSeats.join(', ')} (xe có ${seatCount} ghế)` });
 
-    // Kiểm tra ghế đã được đặt chưa
+    // Kiểm tra ghế đã được đặt chưa (backstop cho booking cũ chưa có trong Trip.bookedSeats)
     const bookedSeats = await Booking.find({
       trip: tripId,
       status: { $in: ['pending', 'processing', 'confirmed'] },
@@ -38,27 +38,43 @@ router.post('/', protect,
     if (conflict.length)
       return res.status(400).json({ message: `Ghế ${conflict.join(', ')} đã được đặt` });
 
+    // ATOMIC: giữ chỗ ghế — chỉ thành công nếu KHÔNG ghế nào trong uniqueSeats đã nằm trong
+    // Trip.bookedSeats. Đóng race condition khi 2 request cùng đặt 1 ghế (check-then-create cũ không atomic).
+    const reserved = await Trip.findOneAndUpdate(
+      { _id: tripId, bookedSeats: { $nin: uniqueSeats } },
+      { $push: { bookedSeats: { $each: uniqueSeats } }, $inc: { availableSeats: -uniqueSeats.length } },
+      { new: true }
+    );
+    if (!reserved)
+      return res.status(409).json({ message: 'Một số ghế vừa được người khác đặt, vui lòng chọn lại' });
+
     // Áp dụng flash sale nếu còn hiệu lực
     const now = new Date();
     const effectivePrice = (trip.salePercent > 0 && trip.saleEndsAt && now < trip.saleEndsAt)
       ? Math.round(trip.price * (1 - trip.salePercent / 100))
       : trip.price;
-    const totalPrice = effectivePrice * seats.length;
+    const totalPrice = effectivePrice * uniqueSeats.length;
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-    const booking = await Booking.create({
-      user: req.user.id,
-      trip: tripId,
-      seats,
-      totalPrice,
-      passengerName,
-      passengerPhone,
-      expiresAt
-    });
 
-    // Trừ số ghế còn lại
-    await Trip.findByIdAndUpdate(tripId, {
-      $inc: { availableSeats: -seats.length }
-    });
+    let booking;
+    try {
+      booking = await Booking.create({
+        user: req.user.id,
+        trip: tripId,
+        seats: uniqueSeats,
+        totalPrice,
+        passengerName,
+        passengerPhone,
+        expiresAt
+      });
+    } catch (createErr) {
+      // Tạo booking lỗi → nhả lại chỗ vừa giữ
+      await Trip.findByIdAndUpdate(tripId, {
+        $pull: { bookedSeats: { $in: uniqueSeats } },
+        $inc:  { availableSeats: uniqueSeats.length },
+      }).catch(() => {});
+      throw createErr;
+    }
 
     broadcast(tripId, { type: 'seats_updated' });
     res.status(201).json(booking);
@@ -86,10 +102,19 @@ router.get('/:id', protect, async (req, res) => {
       .populate({ path: 'trip', populate: ['route', 'bus'] });
     if (!booking) return res.status(404).json({ message: 'Không tìm thấy vé' });
 
-    // Tự động huỷ booking hết hạn
+    // Tự động huỷ booking hết hạn — gate atomic để KHÔNG nhả ghế 2 lần (race với cron mỗi phút)
     if (booking.status === 'pending' && booking.expiresAt && new Date() > booking.expiresAt) {
-      await Booking.findByIdAndUpdate(booking._id, { status: 'cancelled' });
-      await Trip.findByIdAndUpdate(booking.trip._id, { $inc: { availableSeats: booking.seats.length } });
+      const cancelled = await Booking.findOneAndUpdate(
+        { _id: booking._id, status: 'pending' },
+        { $set: { status: 'cancelled' } }
+      );
+      if (cancelled) {
+        await Trip.findByIdAndUpdate(booking.trip._id, {
+          $pull: { bookedSeats: { $in: booking.seats } },
+          $inc:  { availableSeats: booking.seats.length },
+        });
+        broadcast(booking.trip._id.toString(), { type: 'seats_updated' });
+      }
       booking.status = 'cancelled';
     }
 
@@ -102,12 +127,21 @@ router.get('/:id', protect, async (req, res) => {
 // Huỷ vé
 router.put('/:id/cancel', protect, async (req, res) => {
   try {
-    const booking = await Booking.findOne({ _id: req.params.id, user: req.user.id });
-    if (!booking) return res.status(404).json({ message: 'Không tìm thấy vé' });
-    if (booking.status === 'cancelled') return res.status(400).json({ message: 'Vé đã huỷ rồi' });
+    // ATOMIC: claim huỷ — chỉ request flip được status mới chạy refund/nhả ghế (tránh huỷ 2 lần = hoàn tiền 2 lần).
+    // status guard cũng CHẶN huỷ vé 'completed' (đã đi) và 'cancelled' (đã huỷ).
+    const booking = await Booking.findOneAndUpdate(
+      { _id: req.params.id, user: req.user.id, status: { $in: ['pending', 'processing', 'confirmed'] } },
+      { $set: { status: 'cancelled' } },
+      { new: false }   // trả về doc TRƯỚC khi đổi → biết status cũ để xử lý refund
+    );
+    if (!booking) {
+      const exists = await Booking.findOne({ _id: req.params.id, user: req.user.id }).select('status').lean();
+      if (!exists) return res.status(404).json({ message: 'Không tìm thấy vé' });
+      if (exists.status === 'cancelled') return res.status(400).json({ message: 'Vé đã huỷ rồi' });
+      return res.status(400).json({ message: 'Không thể huỷ vé này' });
+    }
 
     const wasConfirmed = booking.status === 'confirmed';
-    booking.status = 'cancelled';
 
     if (wasConfirmed) {
       const Payment           = require('../models/Payment');
@@ -132,9 +166,9 @@ router.put('/:id/cancel', protect, async (req, res) => {
           description: 'Hoàn tiền vé đã huỷ',
           booking:     booking._id,
         });
-        booking.refundStatus = 'completed';
+        await Booking.findByIdAndUpdate(booking._id, { refundStatus: 'completed' });
       } else {
-        booking.refundStatus = 'pending';
+        await Booking.findByIdAndUpdate(booking._id, { refundStatus: 'pending' });
       }
 
       // Xử lý điểm thưởng liên quan đến booking
@@ -163,11 +197,10 @@ router.put('/:id/cancel', protect, async (req, res) => {
       }
     }
 
-    await booking.save();
-
-    // Hoàn lại ghế
+    // Hoàn lại ghế (nhả khỏi bookedSeats + tăng availableSeats)
     await Trip.findByIdAndUpdate(booking.trip, {
-      $inc: { availableSeats: booking.seats.length }
+      $pull: { bookedSeats: { $in: booking.seats } },
+      $inc:  { availableSeats: booking.seats.length },
     });
 
     broadcast(booking.trip.toString(), { type: 'seats_updated' });

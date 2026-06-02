@@ -66,16 +66,24 @@ cron.schedule('* * * * *', async () => {
       expiresAt: { $lt: new Date() }
     });
 
+    let cancelledCount = 0;
     for (const b of expired) {
-      await Booking.findByIdAndUpdate(b._id, { status: 'cancelled' });
+      // Gate atomic: chỉ nhả ghế nếu CHÍNH lần này flip pending → cancelled (tránh race với GET /:id → nhả ghế 2 lần)
+      const cancelled = await Booking.findOneAndUpdate(
+        { _id: b._id, status: 'pending' },
+        { $set: { status: 'cancelled' } }
+      );
+      if (!cancelled) continue;
+      cancelledCount++;
       await Trip.findByIdAndUpdate(b.trip, {
-        $inc: { availableSeats: b.seats.length }
+        $pull: { bookedSeats: { $in: b.seats } },
+        $inc:  { availableSeats: b.seats.length },
       });
       broadcast(b.trip.toString(), { type: 'seats_updated' });
     }
 
-    if (expired.length > 0)
-      console.log(`[Cron] Đã huỷ ${expired.length} booking hết hạn`);
+    if (cancelledCount > 0)
+      console.log(`[Cron] Đã huỷ ${cancelledCount} booking hết hạn`);
 
     // 2. Reset processing > 30 phút → pending (để pending cron xử lý tiếp)
     const staleThreshold = new Date(Date.now() - 30 * 60 * 1000);
@@ -91,29 +99,37 @@ cron.schedule('* * * * *', async () => {
 });
 
 // Chạy mỗi giờ — gửi email nhắc nhở 24h trước khởi hành
-// Dùng cửa sổ ±10 phút để mỗi booking chỉ được gửi đúng 1 lần mỗi lần chạy
+// Cửa sổ TRỌN 1 GIỜ [+24h, +25h): các lần chạy hàng giờ phủ kín trục thời gian, mỗi chuyến lọt đúng 1 lần
+// (window 20 phút cũ bỏ sót chuyến khởi hành phút :11–:49). Cờ reminderSent đảm bảo idempotent + chống gửi trùng 8 worker.
 cron.schedule('0 * * * *', async () => {
   try {
-    const now  = new Date();
-    const lo   = new Date(now.getTime() + 23 * 60 * 60 * 1000 + 50 * 60 * 1000); // +23h50m
-    const hi   = new Date(now.getTime() + 24 * 60 * 60 * 1000 + 10 * 60 * 1000); // +24h10m
+    const now = new Date();
+    const lo  = new Date(now.getTime() + 24 * 60 * 60 * 1000); // +24h
+    const hi  = new Date(now.getTime() + 25 * 60 * 60 * 1000); // +25h
 
-    const bookings = await Booking.find({ status: 'confirmed' })
+    const bookings = await Booking.find({ status: 'confirmed', reminderSent: { $ne: true } })
       .populate({ path: 'trip', populate: ['route', 'bus'] })
       .lean();
 
     const due = bookings.filter(b => {
       const dep = new Date(b.trip?.departureTime);
-      return dep >= lo && dep <= hi;
+      return dep >= lo && dep < hi;
     });
 
+    let sent = 0;
     for (const b of due) {
+      // Claim atomic: chỉ 1 worker gửi (PM2 8 worker đều chạy cron) + đảm bảo đúng 1 lần
+      const claimed = await Booking.findOneAndUpdate(
+        { _id: b._id, reminderSent: { $ne: true } },
+        { $set: { reminderSent: true } }
+      );
+      if (!claimed) continue;
       const user = await User.findById(b.user).select('name email').lean();
-      if (user?.email) await sendReminderEmail(b, user);
+      if (user?.email) { await sendReminderEmail(b, user); sent++; }
     }
 
-    if (due.length > 0)
-      console.log(`[Cron Reminder] Đã gửi ${due.length} email nhắc nhở khởi hành`);
+    if (sent > 0)
+      console.log(`[Cron Reminder] Đã gửi ${sent} email nhắc nhở khởi hành`);
   } catch (err) {
     console.error('[Cron Reminder] Lỗi:', err.message);
   }

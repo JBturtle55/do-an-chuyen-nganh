@@ -13,7 +13,8 @@ const bookingSchema = new mongoose.Schema({
   voucherCode:    { type: String, default: '' },
   pointsUsed:     { type: Number, default: 0 },
   expiresAt:    { type: Date },
-  paidAt:       { type: Date }
+  paidAt:       { type: Date },
+  reminderSent: { type: Boolean, default: false }   // đã gửi email nhắc 24h chưa (idempotent cho cron)
 }, { timestamps: true });
 
 module.exports = mongoose.model('Booking', bookingSchema);
