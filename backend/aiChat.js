@@ -10,6 +10,28 @@ function fmt(n)     { return n?.toLocaleString('vi-VN') ?? '?'; }
 function fmtTime(d) { return new Date(d).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }); }
 function fmtDate(d) { return new Date(d).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }); }
 
+// ── Chuẩn hoá tiếng Việt (bỏ dấu) để match tên thành phố trong câu hỏi ──
+function stripAccent(s) {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd');
+}
+function normVN(s) {                 // bỏ dấu + bỏ ký tự đặc biệt → match tên TP
+  return stripAccent(s).replace(/[^a-z0-9]+/g, ' ').trim();
+}
+const CITY_ALIAS = {
+  'TP. Hồ Chí Minh': ['ho chi minh', 'hcm', 'sai gon', 'saigon', 'tphcm'],
+  'Hà Nội': ['ha noi'],
+  'Đà Nẵng': ['da nang'],
+  'Đà Lạt': ['da lat', 'dalat'],
+  'Buôn Ma Thuột': ['buon ma thuot', 'bmt', 'ban me thuot'],
+  'Vũng Tàu': ['vung tau'],
+};
+function cityTokens(name) { return [...new Set([normVN(name), ...(CITY_ALIAS[name] || [])])].filter(Boolean); }
+
+// ── Ngày theo giờ VN (UTC+7) ──
+function vnYMD(d) { const t = new Date(d.getTime() + 7 * 3600 * 1000); return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() }; }
+function vnDayRangeUTC(y, m, d) { const start = new Date(Date.UTC(y, m - 1, d) - 7 * 3600 * 1000); return { start, end: new Date(start.getTime() + 24 * 3600 * 1000) }; }
+function isoYMD({ y, m, d }) { const p = n => String(n).padStart(2, '0'); return `${y}-${p(m)}-${p(d)}`; }
+
 // Cache system prompt 5 phút để giảm DB query và token usage
 let _promptCache = null;
 let _promptCachedAt = 0;
@@ -131,6 +153,7 @@ QUAN TRỌNG:
 - Mục TUYẾN ĐƯỜNG ĐANG KHAI THÁC là nguồn chuẩn DUY NHẤT về tuyến nào có thật. Nếu tuyến khách hỏi (điểm đi → điểm đến) nằm trong đó → xác nhận "có tuyến" + mời bấm xem giờ/giá (kèm ACTION tag). KHÔNG nói "không có".
 - Chỉ trả lời "không có tuyến này" khi tuyến/địa điểm KHÔNG nằm trong TUYẾN ĐƯỜNG ĐANG KHAI THÁC.
 - Mục CHUYẾN ĐI chỉ là VÍ DỤ về giá/giờ, KHÔNG đầy đủ. Chỉ nêu giờ/giá/số ghế CỤ THỂ khi nó xuất hiện trong mục CHUYẾN ĐI; nếu không có, nói "bạn bấm xem chi tiết giờ & giá nhé" thay vì bịa số liệu.
+- Nếu CUỐI prompt có mục "KẾT QUẢ TÌM CHUYẾN" → đó là DỮ LIỆU THẬT cho đúng tuyến/ngày khách hỏi: hãy trả lời chi tiết bằng CHÍNH XÁC giờ/giá/ghế trong đó (tối đa 5 chuyến tiêu biểu), KHÔNG nói "bấm xem" nữa. Nếu mục đó báo "chưa có chuyến" thì nói đúng vậy + gợi ý ngày khác.
 
 ACTION TAG (bắt buộc khi đề cập chuyến cụ thể):
 Khi người dùng hỏi về tuyến đường cụ thể và bạn có dữ liệu chuyến đi, hãy thêm vào DÒNG CUỐI CÙNG của câu trả lời:
@@ -181,8 +204,8 @@ async function callGemini(systemPrompt, history, userMessage) {
   return r.response.text()?.trim() || null;
 }
 
-// ── Groq (fallback — nhanh, nhưng TPM 6000 chật) ──
-async function callGroq(systemPrompt, history, userMessage) {
+// ── Groq (primary) — prompt gọn nên vừa TPM 6000 ──
+async function callGroq(systemPrompt, history, userMessage, model) {
   if (!process.env.GROQ_API_KEY) return null;
   const client = getClient();
   const messages = [{ role: 'system', content: systemPrompt }];
@@ -191,30 +214,110 @@ async function callGroq(systemPrompt, history, userMessage) {
   }
   messages.push({ role: 'user', content: userMessage });
   const completion = await client.chat.completions.create({
-    model: 'llama-3.1-8b-instant', messages, max_tokens: 320, temperature: 0.4,
+    model, messages, max_tokens: 320, temperature: 0.4,
   });
   return completion.choices[0]?.message?.content?.trim() || null;
+}
+
+// ── Targeted retrieval: tách tuyến + ngày từ câu hỏi → query chuyến THẬT ──
+let _routesCache = null, _routesCachedAt = 0;
+async function getRoutesCached() {
+  const now = Date.now();
+  if (_routesCache && now - _routesCachedAt < PROMPT_TTL) return _routesCache;
+  _routesCache = await require('./models/Route').find({}, 'from to').lean();
+  _routesCachedAt = now;
+  return _routesCache;
+}
+
+function detectRoute(message, routes) {
+  const msgN = ' ' + normVN(message) + ' ';
+  const cities = [...new Set(routes.flatMap(r => [r.from, r.to]).filter(Boolean))];
+  const hits = [];
+  for (const c of cities) {
+    let idx = -1;
+    for (const tok of cityTokens(c)) {
+      const p = msgN.indexOf(' ' + tok + ' ');   // match nguyên từ → tránh "thuê"→"hue"
+      if (p >= 0 && (idx < 0 || p < idx)) idx = p;
+    }
+    if (idx >= 0) hits.push({ city: c, idx });
+  }
+  hits.sort((a, b) => a.idx - b.idx);
+  const uniq = [];
+  for (const h of hits) if (!uniq.some(u => u.city === h.city)) uniq.push(h);
+  if (uniq.length < 2) return null;               // cần đủ 2 thành phố (theo thứ tự xuất hiện)
+  return { from: uniq[0].city, to: uniq[1].city };
+}
+
+function detectDate(message, todayVN) {
+  const s = stripAccent(message);                 // giữ "/" và "-" để bắt dd/mm
+  if (/ngay\s*kia|hom\s*kia/.test(s)) return vnYMD(new Date(Date.now() + 2 * 86400000));
+  if (/ngay\s*mai|\bmai\b/.test(s))   return vnYMD(new Date(Date.now() + 1 * 86400000));
+  const m = s.match(/\b(\d{1,2})\s*[\/\-]\s*(\d{1,2})\b/);
+  if (m) { const dd = +m[1], mm = +m[2]; if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) return { y: todayVN.y, m: mm, d: dd }; }
+  return todayVN;
+}
+
+async function retrieveTrips(message) {
+  const routes = await getRoutesCached();
+  const det = detectRoute(message, routes);
+  if (!det) return null;   // không phải câu hỏi tuyến cụ thể → để prompt chung lo
+
+  const dateYMD = detectDate(message, vnYMD(new Date()));
+  const action  = { type: 'search', from: det.from, to: det.to, date: isoYMD(dateYMD) };
+  const route   = routes.find(r => r.from === det.from && r.to === det.to);
+  const label   = `${det.from} → ${det.to}, ngày ${String(dateYMD.d).padStart(2, '0')}/${String(dateYMD.m).padStart(2, '0')}`;
+
+  if (!route) return { action, block: `KẾT QUẢ TÌM CHUYẾN: tuyến ${det.from} → ${det.to} hiện KHÔNG có trong hệ thống.` };
+
+  const { start, end } = vnDayRangeUTC(dateYMD.y, dateYMD.m, dateYMD.d);
+  const trips = await require('./models/Trip')
+    .find({ route: route._id, status: 'scheduled', departureTime: { $gte: start, $lt: end } })
+    .populate('bus', 'type').sort('departureTime').limit(12).lean();
+
+  if (!trips.length)
+    return { action, block: `KẾT QUẢ TÌM CHUYẾN ${label}: chưa có chuyến nào trong ngày này (tuyến CÓ khai thác — gợi ý khách thử ngày khác hoặc xem website).` };
+
+  const now = new Date();
+  const lines = trips.map(t => {
+    const isSale = t.salePercent > 0 && (!t.saleEndsAt || new Date(t.saleEndsAt) > now);
+    const price  = isSale ? Math.round(t.price * (1 - t.salePercent / 100)) : t.price;
+    const arr    = t.arrivalTime ? `→${fmtTime(t.arrivalTime)}` : '';
+    const sale   = isSale ? ` 🔥-${t.salePercent}%` : '';
+    const bus    = t.bus ? ` ${t.bus.type}` : '';
+    return `• ${fmtTime(t.departureTime)}${arr} — ${fmt(price)}đ${sale} — còn ${t.availableSeats ?? '?'} ghế${bus}`;
+  }).join('\n');
+  return { action, block: `KẾT QUẢ TÌM CHUYẾN ${label} (DỮ LIỆU THẬT — dùng ĐÚNG số liệu này để trả lời):\n${lines}` };
 }
 
 async function getAIReply(userMessage, history = []) {
   const systemPrompt = await buildSystemPrompt();
 
+  // Targeted retrieval: nếu hỏi tuyến cụ thể → nhồi chuyến thật + lấy ACTION deterministic
+  let retrieval = null;
+  try { retrieval = await retrieveTrips(userMessage); }
+  catch (err) { console.error('[AI Chat] retrieve lỗi:', err.message); }
+  const sys = systemPrompt + (retrieval?.block ? `\n\n${retrieval.block}` : '');
+
+  // Chuỗi provider: Groq 70b (chất lượng) → Groq 8b (RPD cao) → Gemini (khi Groq cạn TPM 6000)
+  const attempts = [
+    ['groq:llama-3.3-70b', () => callGroq(sys, history, userMessage, 'llama-3.3-70b-versatile')],
+    ['groq:llama-3.1-8b',  () => callGroq(sys, history, userMessage, 'llama-3.1-8b-instant')],
+    ['gemini:2.5-flash',   () => callGemini(sys, history, userMessage)],
+  ];
   let text = null;
-  // Ưu tiên Gemini; nếu lỗi/null thì fallback Groq
-  try { text = await callGemini(systemPrompt, history, userMessage); }
-  catch (err) { console.error('[AI Chat] Gemini lỗi → fallback Groq:', err.message); }
-  if (!text) {
-    try { text = await callGroq(systemPrompt, history, userMessage); }
-    catch (err) { console.error('[AI Chat] Groq lỗi:', err.message); }
+  for (const [name, fn] of attempts) {
+    try { text = await fn(); if (text) break; }
+    catch (err) { console.error(`[AI Chat] ${name} lỗi → thử tiếp:`, err.message); }
   }
   if (!text) return null;
 
-  let action = null;
-  const m = text.match(/\[ACTION:search:([^\]:]+):([^\]:]+):(\d{4}-\d{2}-\d{2})\]/);
-  if (m) {
-    action = { type: 'search', from: m[1].trim(), to: m[2].trim(), date: m[3] };
-    text = text.replace(m[0], '').trim();
+  // ACTION: ưu tiên retrieval (chắc chắn); nếu không có thì parse tag model xuất ra
+  let action = retrieval?.action || null;
+  if (!action) {
+    const m = text.match(/\[ACTION:search:([^\]:]+):([^\]:]+):(\d{4}-\d{2}-\d{2})\]/);
+    if (m) action = { type: 'search', from: m[1].trim(), to: m[2].trim(), date: m[3] };
   }
+  text = text.replace(/\[ACTION:search:[^\]]*\]/g, '').trim();   // luôn xoá MỌI tag (kể cả tag rỗng/hỏng)
   return { text, action };
 }
 
