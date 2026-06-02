@@ -2177,7 +2177,8 @@ function ChatTab() {
       await adminChatReopen(selected._id);
       setSelected(null);
       setThreadMsgs([]);
-      await loadConvos('completed');
+      await loadConvos('active');   // hội thoại giờ ở tab Active
+      setStatusTab('active');       // chuyển admin sang tab Active để thấy nó
     } catch {} finally { setCompleting(false); }
   };
 
