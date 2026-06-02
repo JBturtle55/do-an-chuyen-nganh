@@ -324,6 +324,7 @@ function SupportChatPanel({ user, isVisible }) {
   const [guestId,     setGuestId]     = useState(() => user ? null : getOrCreateGuestId());
   const [messages,    setMessages]    = useState([]);
   const [convStatus,  setConvStatus]  = useState('active'); // 'active' | 'completed'
+  const [reactivated, setReactivated] = useState(false);    // user bấm "nhắn lại" → mở input dù server còn 'completed'
   const [input,       setInput]       = useState('');
   const [sending,     setSending]     = useState(false);
   const [loading,     setLoading]     = useState(true);
@@ -362,6 +363,7 @@ function SupportChatPanel({ user, isVisible }) {
   // Initial fetch — chỉ chạy khi component mount hoặc user/guestId đổi
   useEffect(() => {
     initialScroll.current = false;
+    setReactivated(false);
     setLoading(true);
     fetchAll();
   }, [fetchAll]);
@@ -408,17 +410,29 @@ function SupportChatPanel({ user, isVisible }) {
     } finally { setSending(false); }
   }, [input, sending, user, guestId]);
 
-  // Khách tạo hội thoại mới sau khi admin hoàn thành
+  // Bắt đầu / tiếp tục hội thoại sau khi admin hoàn thành
   const handleNewConversation = () => {
+    if (user) {
+      // User đăng nhập: cùng 1 hội thoại (conversationId = userId). Chỉ mở lại input;
+      // gửi tin sẽ tự reopen ở backend. Giữ lịch sử cũ.
+      setReactivated(true);
+      return;
+    }
+    // Khách: tạo guestId mới = thread hoàn toàn mới
     localStorage.removeItem('chatGuestId');
     const newId = createGuestId();
     setGuestId(newId);
     setMessages([]);
     setConvStatus('active');
+    setReactivated(false);
     initialScroll.current = false;
   };
 
-  const isCompleted = convStatus === 'completed';
+  // Khi hội thoại đã active trở lại (đã gửi tin / reopen) → bỏ cờ reactivated để
+  // lần admin hoàn thành SAU vẫn hiện banner đúng.
+  useEffect(() => { if (convStatus === 'active') setReactivated(false); }, [convStatus]);
+
+  const isCompleted = convStatus === 'completed' && !reactivated;
 
   // Group by day + consecutive sender
   const grouped = messages.map((msg, i) => ({
@@ -486,13 +500,11 @@ function SupportChatPanel({ user, isVisible }) {
                 <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
                   Nếu bạn cần hỗ trợ thêm, hãy bắt đầu cuộc trò chuyện mới.
                 </div>
-                {!user && (
-                  <button onClick={handleNewConversation}
-                    style={{ padding: '8px 20px', background: C.orangeDark, color: '#fff', border: 'none',
-                             borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                    Bắt đầu hội thoại mới
-                  </button>
-                )}
+                <button onClick={handleNewConversation}
+                  style={{ padding: '8px 20px', background: C.orangeDark, color: '#fff', border: 'none',
+                           borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  💬 Bắt đầu hội thoại mới
+                </button>
               </div>
             )}
             <div ref={bottomRef}/>
@@ -500,8 +512,8 @@ function SupportChatPanel({ user, isVisible }) {
         )}
       </div>
 
-      {/* Input — ẩn khi completed và là khách (user đăng nhập vẫn gửi được để auto-reopen) */}
-      {(!isCompleted || user) && (
+      {/* Input — ẩn khi completed (cho cả khách lẫn user); bấm "Bắt đầu hội thoại mới" để hiện lại */}
+      {!isCompleted && (
         <div style={s.inputWrap}>
           <AutoTextarea
             value={input}
