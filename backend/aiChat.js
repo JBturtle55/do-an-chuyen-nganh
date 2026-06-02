@@ -34,10 +34,17 @@ async function buildSystemPrompt() {
         .sort('departureTime').limit(500).lean(),
     ]);
 
-    // Thành phố phục vụ (compact) — thay cho việc liệt kê toàn bộ ~342 tuyến (vốn ngốn ~10k token)
+    // Tuyến đường — NGUỒN CHUẨN lấy từ Route thật (không đoán). Build adjacency từ DB.
     const cities = [...new Set(routes.flatMap(r => [r.from, r.to]).filter(Boolean))].sort();
     const minPrice = routes.reduce((mn, r) => (r.basePrice && r.basePrice < mn ? r.basePrice : mn), Infinity);
-    const citySection = cities.join(', ');
+    const priceFrom = fmt(minPrice === Infinity ? 100000 : minPrice);
+    const adj = new Map(cities.map(c => [c, new Set()]));
+    for (const r of routes) { if (r.from && r.to && adj.has(r.from)) adj.get(r.from).add(r.to); }
+    // Full-mesh = mọi TP nối tới tất cả TP còn lại → câu gọn; nếu không → liệt kê điểm đến thực của từng TP
+    const isFullMesh = cities.length > 1 && cities.every(c => adj.get(c).size === cities.length - 1);
+    const routeInfo = isFullMesh
+      ? `Có tuyến xe 2 CHIỀU giữa MỌI cặp trong ${cities.length} thành phố sau:\n${cities.join(', ')}`
+      : cities.map(c => `${c} → ${[...adj.get(c)].sort().join(', ') || '(chưa có tuyến)'}`).join('\n');
 
     const pad = n => String(n).padStart(2, '0');
 
@@ -97,8 +104,8 @@ async function buildSystemPrompt() {
     const prompt = `Bạn là trợ lý AI FASTBUS. Hôm nay: ${nowDate.toLocaleDateString('vi-VN', { weekday:'long', day:'2-digit', month:'2-digit', year:'numeric', timeZone:'Asia/Ho_Chi_Minh' })}.
 ${todaySummary}
 
-THÀNH PHỐ PHỤC VỤ (có tuyến 2 chiều giữa các TP này, giá vé từ ~${fmt(minPrice === Infinity ? 100000 : minPrice)}đ):
-${citySection}
+TUYẾN ĐƯỜNG ĐANG KHAI THÁC (nguồn chuẩn — CHỈ những tuyến này có thật, giá vé từ ~${priceFrom}đ):
+${routeInfo}
 
 CHUYẾN ĐI 7 NGÀY TỚI (mỗi ngày vài tuyến đại diện, hỏi cụ thể sẽ trả lời thêm):
 ${tripSection}
@@ -121,8 +128,8 @@ CÁCH TRẢ LỜI:
 - Hỏi đơn hàng cụ thể: "Bạn vui lòng liên hệ hotline 1900 599 997 hoặc nhắn cho nhân viên hỗ trợ để mình kiểm tra nhé!"
 
 QUAN TRỌNG:
-- DANH SÁCH THÀNH PHỐ là nguồn chuẩn về tuyến: nếu CẢ điểm đi và điểm đến đều nằm trong danh sách → tuyến đó CÓ chạy (2 chiều). Hãy xác nhận "có tuyến" và mời khách bấm xem giờ/giá cụ thể (kèm ACTION tag) — KHÔNG nói "không có".
-- Chỉ trả lời "không có tuyến này" khi MỘT trong hai địa điểm KHÔNG có trong danh sách thành phố.
+- Mục TUYẾN ĐƯỜNG ĐANG KHAI THÁC là nguồn chuẩn DUY NHẤT về tuyến nào có thật. Nếu tuyến khách hỏi (điểm đi → điểm đến) nằm trong đó → xác nhận "có tuyến" + mời bấm xem giờ/giá (kèm ACTION tag). KHÔNG nói "không có".
+- Chỉ trả lời "không có tuyến này" khi tuyến/địa điểm KHÔNG nằm trong TUYẾN ĐƯỜNG ĐANG KHAI THÁC.
 - Mục CHUYẾN ĐI chỉ là VÍ DỤ về giá/giờ, KHÔNG đầy đủ. Chỉ nêu giờ/giá/số ghế CỤ THỂ khi nó xuất hiện trong mục CHUYẾN ĐI; nếu không có, nói "bạn bấm xem chi tiết giờ & giá nhé" thay vì bịa số liệu.
 
 ACTION TAG (bắt buộc khi đề cập chuyến cụ thể):
@@ -131,7 +138,7 @@ Khi người dùng hỏi về tuyến đường cụ thể và bạn có dữ li
 Ví dụ hôm nay (${todayISO}): [ACTION:search:Hồ Chí Minh:Hà Nội:${todayISO}]
 Ví dụ ngày mai (${tmrISO}): [ACTION:search:Đà Nẵng:Hà Nội:${tmrISO}]
 Quy tắc:
-- Tên điểm phải khớp chính xác với tên trong danh sách THÀNH PHỐ PHỤC VỤ ở trên
+- Tên điểm phải khớp chính xác với tên trong mục TUYẾN ĐƯỜNG ĐANG KHAI THÁC ở trên
 - Chỉ thêm khi đề cập chuyến cụ thể, KHÔNG thêm khi hỏi chung chung về giá/chính sách
 - Không giải thích hay nhắc đến tag này trong câu trả lời`;
 
