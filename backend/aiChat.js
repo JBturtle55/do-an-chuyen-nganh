@@ -18,12 +18,15 @@ function normVN(s) {                 // bỏ dấu + bỏ ký tự đặc biệt
   return stripAccent(s).replace(/[^a-z0-9]+/g, ' ').trim();
 }
 const CITY_ALIAS = {
-  'TP. Hồ Chí Minh': ['ho chi minh', 'hcm', 'sai gon', 'saigon', 'tphcm'],
-  'Hà Nội': ['ha noi'],
-  'Đà Nẵng': ['da nang'],
-  'Đà Lạt': ['da lat', 'dalat'],
+  'TP. Hồ Chí Minh': ['ho chi minh', 'hcm', 'sai gon', 'saigon', 'tphcm', 'sg'],
+  'Hà Nội': ['ha noi', 'hn'],
+  'Đà Nẵng': ['da nang', 'dn'],
+  'Đà Lạt': ['da lat', 'dalat', 'dl'],
+  'Nha Trang': ['nha trang', 'nt'],
+  'Cần Thơ': ['can tho', 'ct'],
+  'Vũng Tàu': ['vung tau', 'vt'],
+  'Hải Phòng': ['hai phong', 'hp'],
   'Buôn Ma Thuột': ['buon ma thuot', 'bmt', 'ban me thuot'],
-  'Vũng Tàu': ['vung tau'],
 };
 function cityTokens(name) { return [...new Set([normVN(name), ...(CITY_ALIAS[name] || [])])].filter(Boolean); }
 
@@ -286,7 +289,7 @@ async function retrieveTrips(message) {
     const bus    = t.bus ? ` ${t.bus.type}` : '';
     return `• ${fmtTime(t.departureTime)}${arr} — ${fmt(price)}đ${sale} — còn ${t.availableSeats ?? '?'} ghế${bus}`;
   }).join('\n');
-  return { action, block: `KẾT QUẢ TÌM CHUYẾN ${label} (DỮ LIỆU THẬT — dùng ĐÚNG số liệu này để trả lời):\n${lines}` };
+  return { action, block: `KẾT QUẢ TÌM CHUYẾN ${label} (DỮ LIỆU THẬT — BẮT BUỘC liệt kê các chuyến dưới đây cho khách bằng đúng số liệu này, TỐI ĐA 5 chuyến, TUYỆT ĐỐI KHÔNG nói "bấm xem"):\n${lines}` };
 }
 
 async function getAIReply(userMessage, history = []) {
