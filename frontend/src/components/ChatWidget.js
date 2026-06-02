@@ -375,7 +375,10 @@ function SupportChatPanel({ user, isVisible }) {
     if (!qs) return;
     const es = new EventSource(`${base}/chat/events?${qs}`);
     es.onmessage = (e) => {
-      try { if (JSON.parse(e.data)?.type === 'new_message') fetchAll(); } catch (_) {}
+      try {
+        const t = JSON.parse(e.data)?.type;
+        if (t === 'new_message' || t === 'status_changed') fetchAll();  // fetchAll lấy cả messages + status
+      } catch (_) {}
     };
     return () => es.close();
   }, [user, guestId, fetchAll]);

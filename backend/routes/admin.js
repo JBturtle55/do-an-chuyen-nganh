@@ -460,6 +460,7 @@ router.put('/chat/:conversationId/complete', async (req, res) => {
       { status: 'completed', completedAt: new Date() },
       { upsert: true, new: true }
     );
+    broadcastToUser(req.params.conversationId, { type: 'status_changed', status: 'completed' });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
@@ -472,6 +473,7 @@ router.put('/chat/:conversationId/reopen', async (req, res) => {
       { status: 'active', completedAt: null },
       { upsert: true, new: true }
     );
+    broadcastToUser(req.params.conversationId, { type: 'status_changed', status: 'active' });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
