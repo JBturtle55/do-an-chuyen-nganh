@@ -2,6 +2,7 @@ const router    = require('express').Router();
 const Payment   = require('../models/Payment');
 const Booking   = require('../models/Booking');
 const { protect } = require('../middleware/auth');
+const { broadcast } = require('../sseClients');
 const nodemailer  = require('nodemailer');
 const axios       = require('axios');
 const crypto      = require('crypto');
@@ -312,6 +313,7 @@ router.post('/wallet', protect, async (req, res) => {
     await Booking.findByIdAndUpdate(bookingId, bookingUpdate);
     bookingClaimed = false;
     confirmed = true;   // qua mốc này tiền đã hợp lệ → KHÔNG rollback dù bước sau (voucher/email) lỗi
+    broadcast(booking.trip._id.toString(), { type: 'seats_updated' });   // cập nhật ghế: pending(vàng) → đã đặt(xám)
 
     // 8. Tăng usedCount voucher sau khi booking đã confirmed (chỉ lần đầu)
     if (!isRetry && appliedVoucher) {
@@ -523,6 +525,7 @@ router.post('/vnpay/create', protect, async (req, res) => {
     // Edge case: finalPrice = 0 (voucher 100%) — confirm luôn không qua VNPay
     if (finalPrice === 0) {
       await Booking.findByIdAndUpdate(bookingId, { status: 'confirmed' });
+      broadcast(booking.trip._id.toString(), { type: 'seats_updated' });
       if (usedPoints > 0) {
         await PointTransaction.create({
           user: req.user.id, type: 'earn', points: 0,
@@ -646,6 +649,7 @@ router.get('/vnpay/return', async (req, res) => {
 
       if (paymentCreated) {
         await Booking.findByIdAndUpdate(bookingId, { status: 'confirmed', paidAt: new Date() });
+        broadcast(booking.trip._id.toString(), { type: 'seats_updated' });
 
         // booking.totalPrice đã được cập nhật về finalPrice trong vnpay/create
         const Voucher = require('../models/Voucher');
