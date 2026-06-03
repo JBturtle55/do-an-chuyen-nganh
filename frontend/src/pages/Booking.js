@@ -149,11 +149,16 @@ export default function Booking() {
   const navigate  = useNavigate();
   const { addToast } = useToast();
 
-  const [bookStep, setBookStep]             = useState(1);
+  // Khôi phục trạng thái đã lưu trước khi bị chuyển sang /login (chọn ghế → bắt đăng nhập → quay lại)
+  const [pending] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(`fastbus_pending_booking_${id}`) || 'null'); }
+    catch { return null; }
+  });
+  const [bookStep, setBookStep]             = useState(pending?.step || 1);
   const [trip, setTrip]                     = useState(null);
   const [bookedSeats, setBookedSeats]       = useState({ confirmed:[], pending:[], processing:[] });
-  const [selectedSeats, setSelected]        = useState([]);
-  const [form, setForm]                     = useState({ passengerName:'', passengerPhone:'' });
+  const [selectedSeats, setSelected]        = useState(pending?.seats || []);
+  const [form, setForm]                     = useState(pending?.form || { passengerName:'', passengerPhone:'' });
   const [loading, setLoading]               = useState(false);
   const [pageLoading, setPageLoading]       = useState(true);
   const [pageError, setPageError]           = useState(false);
@@ -162,6 +167,20 @@ export default function Booking() {
   const [reviews, setReviews]               = useState(null);
   const [reviewsLoading, setReviewsLoading] = useState(false);
   useSEO({ title: trip ? `Đặt vé ${trip.route?.from} → ${trip.route?.to}` : 'Đặt vé — FASTBUS' });
+
+  // Đã đọc pending ở init → xoá để lần ghé sau (không qua login) không bị khôi phục nhầm
+  useEffect(() => {
+    sessionStorage.removeItem(`fastbus_pending_booking_${id}`);
+  }, [id]);
+
+  // Lưu lại bước/ghế/thông tin rồi mới sang /login → đăng nhập xong quay về đúng chỗ
+  const loginPreservingState = () => {
+    try {
+      sessionStorage.setItem(`fastbus_pending_booking_${id}`,
+        JSON.stringify({ step: bookStep, seats: selectedSeats, form }));
+    } catch {}
+    navigate('/login', { state: { from: `/booking/${id}` } });
+  };
 
   useEffect(() => {
     setPageLoading(true); setPageError(false);
@@ -224,7 +243,7 @@ export default function Booking() {
 
   const handleSubmit = async () => {
     if (selectedSeats.length === 0) return addToast('Chọn ít nhất 1 ghế', 'warning');
-    if (!user) return navigate('/login', { state: { from: `/booking/${id}` } });
+    if (!user) return loginPreservingState();
     setLoading(true);
     try {
       const res = await createBooking({
@@ -296,7 +315,7 @@ export default function Booking() {
                   <div style={{ color:'rgba(255,255,255,0.55)', fontSize:13 }}>Tích điểm thưởng, quản lý vé dễ dàng</div>
                 </div>
                 <button
-                  onClick={() => navigate('/login', { state: { from: `/booking/${id}` } })}
+                  onClick={loginPreservingState}
                   style={{ padding:'9px 18px', background:'#3b82f6', color:'#fff', border:'none', borderRadius:10, fontWeight:700, fontSize:13, cursor:'pointer', whiteSpace:'nowrap' }}>
                   Đăng nhập ngay
                 </button>
