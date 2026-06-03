@@ -258,13 +258,15 @@ function detectRoute(message, routes) {
   return { from: uniq[0].city, to: uniq[1].city };
 }
 
-function detectDate(message, todayVN) {
+// Trả {y,m,d} nếu câu hỏi NÊU ngày cụ thể; null nếu không (→ caller tìm chuyến gần nhất)
+function detectDate(message) {
   const s = stripAccent(message);                 // giữ "/" và "-" để bắt dd/mm
+  if (/hom\s*nay|bua\s*nay/.test(s))  return vnYMD(new Date());
   if (/ngay\s*kia|hom\s*kia/.test(s)) return vnYMD(new Date(Date.now() + 2 * 86400000));
   if (/ngay\s*mai|\bmai\b/.test(s))   return vnYMD(new Date(Date.now() + 1 * 86400000));
   const m = s.match(/\b(\d{1,2})\s*(?:[\/\-.]|thang)\s*(\d{1,2})\b/);  // 8/6, 8-6, 8.6, "8 thang 6"
-  if (m) { const dd = +m[1], mm = +m[2]; if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) return { y: todayVN.y, m: mm, d: dd }; }
-  return todayVN;
+  if (m) { const dd = +m[1], mm = +m[2]; if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) return { y: vnYMD(new Date()).y, m: mm, d: dd }; }
+  return null;
 }
 
 async function retrieveTrips(message) {
@@ -272,20 +274,42 @@ async function retrieveTrips(message) {
   const det = detectRoute(message, routes);
   if (!det) return null;   // không phải câu hỏi tuyến cụ thể → để prompt chung lo
 
-  const dateYMD = detectDate(message, vnYMD(new Date()));
-  const action  = { type: 'search', from: det.from, to: det.to, date: isoYMD(dateYMD) };
-  const route   = routes.find(r => r.from === det.from && r.to === det.to);
-  const label   = `${det.from} → ${det.to}, ngày ${String(dateYMD.d).padStart(2, '0')}/${String(dateYMD.m).padStart(2, '0')}`;
+  const route    = routes.find(r => r.from === det.from && r.to === det.to);
+  const explicit = detectDate(message);   // {y,m,d} nếu nêu ngày; null nếu không
 
-  if (!route) return { action, block: `KẾT QUẢ TÌM CHUYẾN: tuyến ${det.from} → ${det.to} hiện KHÔNG có trong hệ thống.` };
+  if (!route) {
+    return {
+      action: { type: 'search', from: det.from, to: det.to, date: isoYMD(explicit || vnYMD(new Date())) },
+      block:  `KẾT QUẢ TÌM CHUYẾN: tuyến ${det.from} → ${det.to} hiện KHÔNG có trong hệ thống.`,
+    };
+  }
 
-  const { start, end } = vnDayRangeUTC(dateYMD.y, dateYMD.m, dateYMD.d);
-  const trips = await require('./models/Trip')
-    .find({ route: route._id, status: 'scheduled', departureTime: { $gte: start, $lt: end } })
-    .populate('bus', 'type').sort('departureTime').limit(12).lean();
+  const Trip = require('./models/Trip');
+  let trips, dateYMD;
 
-  if (!trips.length)
-    return { action, block: `KẾT QUẢ TÌM CHUYẾN ${label}: chưa có chuyến nào trong ngày này (tuyến CÓ khai thác — gợi ý khách thử ngày khác hoặc xem website).` };
+  if (explicit) {
+    // Nêu ngày cụ thể → query đúng ngày đó
+    dateYMD = explicit;
+    const { start, end } = vnDayRangeUTC(dateYMD.y, dateYMD.m, dateYMD.d);
+    trips = await Trip.find({ route: route._id, status: 'scheduled', departureTime: { $gte: start, $lt: end } })
+      .populate('bus', 'type').sort('departureTime').limit(12).lean();
+    if (!trips.length) {
+      const lbl = `${det.from} → ${det.to}, ngày ${String(dateYMD.d).padStart(2,'0')}/${String(dateYMD.m).padStart(2,'0')}`;
+      return { action: { type: 'search', from: det.from, to: det.to, date: isoYMD(dateYMD) },
+        block: `KẾT QUẢ TÌM CHUYẾN ${lbl}: chưa có chuyến nào trong ngày này (tuyến CÓ khai thác — gợi ý khách thử ngày khác hoặc xem website).` };
+    }
+  } else {
+    // KHÔNG nêu ngày ("chuyến gần nhất", hay chỉ hỏi tuyến) → tìm chuyến SẮP TỚI gần nhất
+    const upcoming = await Trip.find({ route: route._id, status: 'scheduled', departureTime: { $gte: new Date() } })
+      .populate('bus', 'type').sort('departureTime').limit(20).lean();
+    if (!upcoming.length) {
+      return { action: { type: 'search', from: det.from, to: det.to, date: isoYMD(vnYMD(new Date())) },
+        block: `KẾT QUẢ TÌM CHUYẾN ${det.from} → ${det.to}: hiện chưa có lịch chuyến sắp tới (tuyến CÓ khai thác — mời khách xem website).` };
+    }
+    dateYMD = vnYMD(new Date(upcoming[0].departureTime));   // ngày của chuyến gần nhất
+    const firstDayISO = isoYMD(dateYMD);
+    trips = upcoming.filter(t => isoYMD(vnYMD(new Date(t.departureTime))) === firstDayISO);  // gom cùng ngày gần nhất
+  }
 
   const now = new Date();
   const lines = trips.map(t => {
@@ -296,7 +320,13 @@ async function retrieveTrips(message) {
     const bus    = t.bus ? ` ${t.bus.type}` : '';
     return `• ${fmtTime(t.departureTime)}${arr} — ${fmt(price)}đ${sale} — còn ${t.availableSeats ?? '?'} ghế${bus}`;
   }).join('\n');
-  return { action, block: `KẾT QUẢ TÌM CHUYẾN ${label} (DỮ LIỆU THẬT — BẮT BUỘC liệt kê các chuyến dưới đây cho khách bằng đúng số liệu này, TỐI ĐA 5 chuyến, TUYỆT ĐỐI KHÔNG nói "bấm xem"):\n${lines}` };
+
+  const dStr  = `${String(dateYMD.d).padStart(2,'0')}/${String(dateYMD.m).padStart(2,'0')}`;
+  const label = explicit ? `${det.from} → ${det.to}, ngày ${dStr}` : `${det.from} → ${det.to} — chuyến gần nhất (ngày ${dStr})`;
+  return {
+    action: { type: 'search', from: det.from, to: det.to, date: isoYMD(dateYMD) },
+    block:  `KẾT QUẢ TÌM CHUYẾN ${label} (DỮ LIỆU THẬT — BẮT BUỘC liệt kê các chuyến dưới đây cho khách bằng đúng số liệu này, TỐI ĐA 5 chuyến, TUYỆT ĐỐI KHÔNG nói "bấm xem"):\n${lines}`,
+  };
 }
 
 async function getAIReply(userMessage, history = []) {
