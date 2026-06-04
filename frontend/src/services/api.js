@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'https://booking.longvan.vn/api'
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api'
 });
 
 // Tự động gắn token vào mỗi request nếu user đã đăng nhập
@@ -45,13 +45,11 @@ export const adminGetBuses    = ()       => api.get('/admin/buses');
 export const adminCreateBus   = (data)   => api.post('/admin/buses', data);
 export const adminUpdateBus   = (id, data) => api.put(`/admin/buses/${id}`, data);
 export const adminDeleteBus   = (id)     => api.delete(`/admin/buses/${id}`);
-export const getRoutes        = ()       => api.get('/routes');
 export const getCities        = ()       => api.get('/routes/cities');
 export const adminGetRoutes   = ()       => api.get('/admin/routes');
 export const adminCreateRoute = (data)   => api.post('/admin/routes', data);
 export const adminUpdateRoute = (id, data) => api.put(`/admin/routes/${id}`, data);
 export const adminDeleteRoute = (id)     => api.delete(`/admin/routes/${id}`);
-export const adminCreateTrip  = (data)   => api.post('/trips', data);
 export const adminBulkTrips   = (data)   => api.post('/trips/bulk', data);
 export const adminUpdateTrip  = (id, data) => api.put(`/trips/${id}`, data);
 export const adminDeleteTrip  = (id)     => api.delete(`/trips/${id}`);
@@ -97,7 +95,7 @@ export const adminCreatePost  = (data)       => api.post('/posts', data);
 export const adminUpdatePost  = (id, data)   => api.put(`/posts/${id}`, data);
 export const adminDeletePost  = (id)         => api.delete(`/posts/${id}`);
 
-// Chat (user) — truyền { guestId } trong params nếu chưa đăng nhập
+// Chat (user) — truyền { conversationId } trong params/data
 export const chatGetMessages = (params) => api.get('/chat/messages', { params });
 export const chatSend        = (data)   => api.post('/chat/messages', data);
 export const chatGetUnread   = (params) => api.get('/chat/unread', { params });
