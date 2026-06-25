@@ -48,7 +48,7 @@ export default function TripCard({ trip }) {
   const arr     = trip.arrivalTime ? new Date(trip.arrivalTime)
     : trip.route?.duration ? new Date(dep.getTime() + trip.route.duration * 60000) : null;
   const now     = new Date();
-  const isOnSale = trip.salePercent > 0 && trip.saleEndsAt && now < new Date(trip.saleEndsAt);
+  const isOnSale = trip.salePercent > 0 && (!trip.saleEndsAt || now < new Date(trip.saleEndsAt));
   const price   = isOnSale ? Math.round(trip.price * (1 - trip.salePercent / 100)) : trip.price;
 
   const depTime = dep.toLocaleTimeString('vi-VN', { hour:'2-digit', minute:'2-digit' });

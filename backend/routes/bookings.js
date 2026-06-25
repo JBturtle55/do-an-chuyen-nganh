@@ -48,9 +48,9 @@ router.post('/', protect,
     if (!reserved)
       return res.status(409).json({ message: 'Một số ghế vừa được người khác đặt, vui lòng chọn lại' });
 
-    // Áp dụng flash sale nếu còn hiệu lực
+    // Áp dụng flash sale nếu còn hiệu lực (saleEndsAt rỗng = sale vô thời hạn)
     const now = new Date();
-    const effectivePrice = (trip.salePercent > 0 && trip.saleEndsAt && now < trip.saleEndsAt)
+    const effectivePrice = (trip.salePercent > 0 && (!trip.saleEndsAt || now < trip.saleEndsAt))
       ? Math.round(trip.price * (1 - trip.salePercent / 100))
       : trip.price;
     const totalPrice = effectivePrice * uniqueSeats.length;

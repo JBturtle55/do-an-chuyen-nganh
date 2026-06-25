@@ -46,7 +46,7 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB error:', err));
 
-// Routes (sẽ thêm dần ở các bước sau)
+// Routes 
 app.use('/api/auth',     require('./routes/auth'));
 app.use('/api/trips',    require('./routes/trips'));
 app.use('/api/bookings', require('./routes/bookings'));

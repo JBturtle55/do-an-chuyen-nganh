@@ -404,7 +404,7 @@ export default function Search() {
     if (filterBus)     r = r.filter(t => t.bus?.name === filterBus);
     if (filterBusType) r = r.filter(t => t.bus?.type === filterBusType);
     if (onlyAvail)     r = r.filter(t => t.availableSeats > 0);
-    if (onlySale)      r = r.filter(t => t.salePercent > 0 && t.saleEndsAt && now < new Date(t.saleEndsAt));
+    if (onlySale)      r = r.filter(t => t.salePercent > 0 && (!t.saleEndsAt || now < new Date(t.saleEndsAt)));
     if (timeOfDay) r = r.filter(t => {
       const h = new Date(t.departureTime).getHours();
       if (timeOfDay === 'early')     return h < 6;
