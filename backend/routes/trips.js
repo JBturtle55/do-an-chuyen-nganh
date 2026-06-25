@@ -102,7 +102,9 @@ router.post('/', protect, isAdmin, async (req, res) => {
 // Sửa chuyến (admin)
 router.put('/:id', protect, isAdmin, async (req, res) => {
   try {
-    const trip = await Trip.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    // populate route + bus để frontend render đúng tên tuyến / số ghế sau khi cập nhật
+    const trip = await Trip.findByIdAndUpdate(req.params.id, req.body, { new: true })
+      .populate('route').populate('bus');
     res.json(trip);
   } catch (err) {
     res.status(500).json({ message: err.message });
